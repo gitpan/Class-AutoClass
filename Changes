@@ -13,3 +13,7 @@ Revision history
 0.05  Mon Feb 23 11:12:43 PST 2004
         - supressed a bunch of warnings throw when using -w flag
 	- use Storable added back to AutoClass
+0.07  Mon Aug 16 18:04:12 PDT 2004
+        - changes to accomodate Class::AutoDB refactor
+0.08  Tue Aug 17 10:36:06 PDT 2004
+       - missed some test files in the 0.07 distribution (oops)
