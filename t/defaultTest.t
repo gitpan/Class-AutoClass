@@ -1,10 +1,9 @@
 use strict;
-use lib 't/';
+use lib qw(../lib t/);
 use Parent;
 use Child;
 use GrandChild;
 use Test::More qw/no_plan/;
-use Data::Dumper; # only for debugging
 
 # this is a regression test covering a bug where the DEFAULTS set in a child class
 # do not get correctly applied to attributes in the parent class

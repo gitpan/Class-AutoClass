@@ -1,6 +1,7 @@
 package Class::AutoClass::Args;
 use strict;
 use Carp;
+use Data::Dumper;
 
 sub new {
   my($class,@args)=@_;
@@ -38,6 +39,7 @@ sub is_keyword {!(@_%2) && $_[0]=~/^-/;}
 sub is_positional {@_%2 || $_[0]!~/^-/;}
 
 sub _fix_args {
+  no warnings;
   my(@args)=@_;
   @args=@{$args[0]} if @args==1 && 'ARRAY' eq ref $args[0];
   @args=%{$args[0]} if @args==1 && 'HASH' eq ref $args[0];

@@ -1,6 +1,6 @@
 package Class::AutoClass;
 use strict;
-our $VERSION = '0.06';
+our $VERSION = '0.07';
 use vars qw($AUTOCLASS $AUTODB @ISA %CACHE @EXPORT);
 $AUTOCLASS=__PACKAGE__;
 use Class::AutoClass::Root;
@@ -149,12 +149,13 @@ sub declare {
   my $attributes=[AUTO_ATTRIBUTES($class)];
   my $synonyms={SYNONYMS($class)};
   my %autodb=AUTODB($class);
+  my $args;
   if (%autodb) {
   	no strict 'refs';
   	# make sure that AutoDBable class ISA SmartProxy
-  	push @{$class.'::ISA'}, "Class::AutoDB::SmartProxy";
+  	unshift @{$class.'::ISA'}, "Class::AutoDB::SmartProxy";
     require 'Class/AutoDB.pm';
-    my $args = Class::AutoClass::Args->new(%autodb, -class=>$class);
+    $args = Class::AutoClass::Args->new(%autodb, -class=>$class);
     ## TODO: auto_register should just get $args
     Class::AutoDB::auto_register(%autodb,-class=>$class);
   }
@@ -169,18 +170,29 @@ sub declare {
 
   for my $func (@$attributes) {
       my $fixed_func=Class::AutoClass::Args::fix_keyword($func);
-      my $sub='*'.$class.'::'.$func."=sub{\@_>1?
-        \$_[0]->{\'$fixed_func\'}=\$_[1]: 
-        \$_[0]->{\'$fixed_func\'};}";
+      my ($sub,%keys);
+      if ($args and $args->{keys}) {
+        %keys = map { split } split /,/, $args->{keys};
+      }
+      if ( $keys{$func} ){
+        $sub='*'.$class.'::'.$func."=sub{\@_>1?
+        \$_[0] . '::AUTOLOAD'->{\'$fixed_func\'}=\$_[1]: 
+        \$_[0] . '::AUTOLOAD'->{\'$fixed_func\'};}";
+      } 
+      else {
+           $sub='*'.$class.'::'.$func."=sub{\@_>1?
+             \$_[0]->{\'$fixed_func\'}=\$_[1]: 
+             \$_[0]->{\'$fixed_func\'};}"; 
+      }
       eval $sub;
   }
-    
+
   while(my($func,$old_func)=each %$synonyms) {
     next if $func eq $old_func;	# avoid infinite recursion if old and new are the same
     my $sub='*'.$class.'::'.$func."=sub {\$_[0]->$old_func(\@_[1..\$\#_])}";
     eval $sub;
   }
-  if ($case=~/lower|lc/i) {	# create lowercase versions of each method, too
+  if (defined $case && $case=~/lower|lc/i) {	# create lowercase versions of each method, too
     for my $func (@$attributes) {
       my $lc_func=lc $func;
       next if $lc_func eq $func; # avoid infinite recursion if func already lowercase
@@ -188,7 +200,7 @@ sub declare {
       eval $sub;
     }
   }
-  if ($case=~/upper|uc/i) {	# create uppercase versions of each method, too
+  if (defined $case && $case=~/upper|uc/i) {	# create uppercase versions of each method, too
     for my $func (@$attributes) {
       my $uc_func=uc $func;
       next if $uc_func eq $func; # avoid infinite recursion if func already uppercase
@@ -208,8 +220,9 @@ sub _enumerate {
 }
 
 sub __enumerate {
+  no warnings;
   my($classes,$types,$can_new,$class)=@_;
-  die "Circular inheritance structure. \$class=$class" if (defined $types->{$class} && $types->{$class} eq 'pending');
+  die "Circular inheritance structure. \$class=$class" if ($types->{$class} eq 'pending');
   return $types->{$class} if defined $types->{$class};
   $types->{$class}='pending';
   my @isa;

@@ -12,3 +12,4 @@ t/GrandChild.pm
 t/Parent.pm
 t/RootTest.t
 t/defaultTest.t
+META.yml                                 Module meta-data (added by MakeMaker)

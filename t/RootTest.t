@@ -1,9 +1,8 @@
-use lib 't/';
+use lib qw(../lib t/);
 use Test::More qw/no_plan/;
 use Class::AutoClass::Root;
 use IO::Scalar;
 use strict;
-use Data::Dumper;
 
 my $obj = new Class::AutoClass::Root;
 
@@ -19,9 +18,9 @@ isa_ok($obj,  "Class::AutoClass::Root");
     untie *STDERR;
   }
 
- my @results = $obj->stack_trace;
- my ($last) = shift @results;
- ok( "@$last" =~ /stack_trace/, "testing stack_trace");
+ my ($results) = $obj->stack_trace;
+ my $class = pop @$results;
+ ok($class =~ /Class::AutoClass::Root::stack_trace/, "testing stack_trace");
  eval { $obj->throw('Testing throw') };
  ok ($@ =~ /Testing throw/, "testing throw");
 
