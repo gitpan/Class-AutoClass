@@ -17,3 +17,5 @@ Revision history
         - changes to accomodate Class::AutoDB refactor
 0.08  Tue Aug 17 10:36:06 PDT 2004
        - missed some test files in the 0.07 distribution (oops)
+0.09  Wed Sep  1 12:11:24 PDT 2004
+       - Class::AutoDB::auto_register now takes a Class::AutoClass::Args object as an arg 

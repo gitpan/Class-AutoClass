@@ -1,6 +1,6 @@
 package Class::AutoClass;
 use strict;
-our $VERSION = '0.08';
+our $VERSION = '0.09';
 use vars qw($AUTOCLASS $AUTODB @ISA %CACHE @EXPORT);
 $AUTOCLASS=__PACKAGE__;
 use Class::AutoClass::Root;
@@ -61,6 +61,8 @@ sub get {
 }
 sub set_attributes {
   my($self,$attributes,$args)=@_;
+  $self->throw('Atrribute list must be an array ref') 
+    unless ref $attributes eq 'ARRAY';
   my @keywords=Class::AutoClass::Args::fix_keyword(@$attributes);
   for my $func (@$attributes) {
     my $keyword=shift @keywords;
@@ -156,8 +158,7 @@ sub declare {
   	unshift @{$class.'::ISA'}, "Class::AutoDB::SmartProxy";
     require 'Class/AutoDB.pm';
     $args = Class::AutoClass::Args->new(%autodb, -class=>$class);
-    ## TODO: auto_register should just get $args
-    Class::AutoDB::auto_register(%autodb,-class=>$class);
+    Class::AutoDB::auto_register($args);
   }
 
   # enumerate internal super-classes and find an external class to create object
