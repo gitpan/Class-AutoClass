@@ -78,7 +78,8 @@ AutoArgs - Argument list processing
 =head1 SYNOPSIS
 
   use Class::AutoClass::Args;
-  my $args=new Class::AutoClass::Args(name=>'Nat',-sex=>'male',HOBBIES=>'hiking',hobbies=>'cooking');
+  my $args=new Class::AutoClass::Args(name=>'Joe',-sex=>'male',
+                                      HOBBIES=>'hiking',hobbies=>'cooking');
 
   # access argument values as HASH slots
   my $name=$args->{name};
@@ -98,33 +99,32 @@ AutoArgs - Argument list processing
 
 This class simplifies the handling of keyword argument lists.
 
-The 'new' method accepts an array, ARRAY ref, or HASH ref of
-keyword=>value pairs. It normalizes the keywords to ignore case and
-leading dashes ('-').  In other words, the following keywords are all
-equivalent: 
+The 'new' method accepts an array, ARRAY, or HASH of keyword=>value
+pairs. It normalizes the keywords to ignore case and leading dashes
+('-').  In other words, the following keywords are all equivalent:
 
   first_name, -first_name, -FIRST_NAME, --FIRST_NAME, First_Name,
   -First_Name
 
-Internally  we convert keywords to lowercase with no leading dash.)
+Internally  we convert keywords to lowercase with no leading dash.
 
-Repeated keyword arguments are converted into an ARRAY ref of the
-values.  Thus
+Repeated keyword arguments are converted into an ARRAY of the values.
+Thus
 
- new Class::AutoClass::Args(first_name=>'Nat', first_name=>'Nathan')
+ new Class::AutoClass::Args(first_name=>'Joe', first_name=>'Joseph')
 
 is equivalent to
 
-  new Class::AutoClass::Args(first_name=>['Nat', 'Nathan'])
+  new Class::AutoClass::Args(first_name=>['Joe', 'Joseph'])
 
-Since argument lists can be provided as ARRAY or HASH refs, the following
+Since argument lists can be provided as ARRAYs or HASHes, the following
 
-   new Class::AutoClass::Args([first_name=>'Nat', last_name=>'Goodman'])
-   new Class::AutoClass::Args({first_name=>'Nat', last_name=>'Goodman'})
+   new Class::AutoClass::Args([first_name=>'John', last_name=>'Doe'])
+   new Class::AutoClass::Args({first_name=>'John', last_name=>'Doe'})
 
 are both equivalent to 
 
-   new Class::AutoClass::Args(first_name=>'Nat', last_name=>'Goodman')
+   new Class::AutoClass::Args(first_name=>'John', last_name=>'Doe')
 
 =head1 KNOWN BUGS AND CAVEATS
 
@@ -134,13 +134,13 @@ This is still a work in progress.
 
 See caveats about accessing arguments via AUTOLOADed methods.
 
-=head1 AUTHOR - Nat Goodman
+=head1 AUTHOR - Nat Goodman, Chris Cavnor
 
 Email natg@shore.net
 
 =head1 COPYRIGHT
 
-Copyright (c) 2003 Institute for Systems Biology (ISB). All Rights Reserved.
+Copyright (c) 2004 Institute for Systems Biology (ISB). All Rights Reserved.
 
 This module is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself.
@@ -154,26 +154,26 @@ internal methods are preceded with _
 
  Title   : new
  Usage   : $args=new Class::AutoClass::Args
-              (name=>'Nat',-sex=>'male',HOBBIES=>'hiking',hobbies=>'cooking')
+              (name=>'Joe',-sex=>'male',HOBBIES=>'hiking',hobbies=>'cooking')
            -- OR --
           $args=new Class::AutoClass::Args
-              ([name=>'Nat',-sex=>'male',HOBBIES=>'hiking',hobbies=>'cooking'])
+              ([name=>'Joe',-sex=>'male',HOBBIES=>'hiking',hobbies=>'cooking'])
            -- OR --
           $args=new Class::AutoClass::Args
-              ({name=>'Nat',-sex=>'male',HOBBIES=>'hiking',hobbies=>'cooking'})
+              ({name=>'Joe',-sex=>'male',HOBBIES=>'hiking',hobbies=>'cooking'})
  Function: Create a normalized argument list
  Returns : Class::AutoClass::Args object that represents the given arguments
  Args    : Argument list in keyword=>value form
            This can be an array (as in form 1 above).  This is the ususal case.
-           Or it can be a single ARRAY ref or HASH ref as in forms 2 and 3
+           Or it can be a single ARRAY or HASH as in forms 2 and 3
 
 =head2 Getting and setting argument values from object
 
 One simple way to get and set argument values is to treat the object
-as a HASH ref and access the argument as a hash entry, eg,
+as a HASH and access the argument as a hash entry, eg,
 
 $name=$args->{name};
-$args->{name}='Nathan'.
+$args->{name}='Joseph'.
 
 While this approach is generally frowned upon in object-oriented
 programming (because it breaks object encapsulation), we deem it to be
@@ -187,7 +187,7 @@ A second simple approach is to invoke a method with the name of the
 keyword.  Eg,
 
 $args->name;
-$args->name('Nathan');   # sets name to 'Nathan'
+$args->name('Joseph');   # sets name to 'Joseph'
 
 The method name is normalized exactly as in 'new'.
 
@@ -202,11 +202,11 @@ The class also provides two methods for wholesale manipulation of arguments.
  Title   : get_args
  Usage   : ($first,$last)=$args->get_args(qw(-first_name last_name))
  Function: Get values for multiple keywords
- Args    : array or ARRAY ref of keywords. These are normalized exactly as in 'new'
- Returns : array or ARRAY ref of attribute values
+ Args    : array or ARRAY of keywords. These are normalized exactly as in 'new'
+ Returns : array or ARRAY of attribute values
 
  Title   : set_args
- Usage   : $args->set_args(-first_name=>'Nat',-last_name=>'Goodman')
+ Usage   : $args->set_args(-first_name=>'John',-last_name=>'Doe')
  Function: Set multiple attributes in existing object
  Args    : Parameter list in same format as for 'new'
  Returns : nothing
@@ -215,10 +215,10 @@ The class also provides two methods for wholesale manipulation of arguments.
  Usage   : %args=$args->get_args;
  Function: Get a list of all key,values
  Args    : none
- Returns : hash or HASH ref of NVP's.
+ Returns : hash or HASH of key, value pairs.
 
  Title   : set_args
- Usage   : $args->set_args(-first_name=>'Nat',-last_name=>'Goodman')
+ Usage   : $args->set_args(-first_name=>'John',-last_name=>'Doe')
  Function: Set multiple attributes in existing object
  Args    : Parameter list in same format as for 'new'
  Returns : nothing
@@ -278,20 +278,20 @@ lists.  We strongly discourage this for the reasons discussed below.
 The keyword => value notation is just a Perl shorthand for stating two
 list members with the first one quoted.  Thus,
 
-  @list=(first_name=>'Nat', last_name=>'Goodman')
+  @list=(first_name=>'John', last_name=>'Doe')
 
 is completely equivalent to 
 
-  @list=('first_name', 'Nat', 'last_name', 'Goodman')
+  @list=('first_name', 'John', 'last_name', 'Doe')
 
 The ambiguity of allowing both positional and keyword forms should now
 be apparent. In this example,
 
-  new Class::AutoClass::Args ('first_name', 'Nat')
+  new Class::AutoClass::Args ('first_name', 'John')
 
 there is s no way to tell whether the program is specifying a keyword
-argument list with the parameter 'first_name' set to the value "Nat'
-or a positional argument list with the values ''first_name' and 'Nat'
+argument list with the parameter 'first_name' set to the value "John'
+or a positional argument list with the values ''first_name' and 'John'
 being passed to the first two parameters.
 
 If a program wishes to permit both forms, we suggest the convention

@@ -56,6 +56,8 @@ is($object->_is_positional,1,"_is_positional routine checks out");
 is($object->last,"candy",'test set() method with single attribute using positional notation');
 $object->set(-last=>"lobster");
 is($object->last,"lobster",'test set() method with single attribute using -key=>value notation');
+$object->set(-first=>"red",-last=>"riding hood");
+is($object->get('first'),'red','test get() method');
 $object->set({-first=>"red",-last=>"riding hood"});
 is($object->get('first'),'red','test get() method');
 is($object->get('last'),'riding hood');
@@ -203,15 +205,14 @@ package Class::testPackage6;
  use base qw(Class::AutoClass Class::testPackage5);
  use vars qw($package @AUTO_ATTRIBUTES @OTHER_ATTRIBUTES %SYNONYMS $CASE $age);
  
-   BEGIN {
-   	$package = __PACKAGE__;
+  BEGIN { 
+    $package = __PACKAGE__; 
     @AUTO_ATTRIBUTES=qw(first last friends sex);
     @OTHER_ATTRIBUTES=qw(age);
     %SYNONYMS=(gender=>'sex');
     $CASE='upper';
     Class::AutoClass::declare(__PACKAGE__);
-  }
-
+ }
  sub age {
   my $self = shift;
   $age = $age || shift;

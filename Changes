@@ -2,4 +2,8 @@ Revision history
 
 0.01  Mon Dec 22 17:28:49 PST 2003
 	- original version. 
-
+0.02  Tues 06 Jan 18:03:38 PST 2004 
+        - some documentation changes
+0.03  Mon Jan 12 17:13:33 PST 2004
+        - more documentation changes 
+        - removed Class::WeakSingleton dependency
