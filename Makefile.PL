@@ -5,8 +5,7 @@ use ExtUtils::MakeMaker;
 WriteMakefile(
     'NAME'		=> 'Class::AutoClass',
     'VERSION_FROM'	=> 'lib/Class/AutoClass.pm', # finds $VERSION
-    'PREREQ_PM'		=> {Clone => 0.15,
-			    Data::Dumper => 2.12,
+    'PREREQ_PM'		=> { Data::Dumper => 2.12,
 			    Storable => 2.08
-			   }, # e.g., Module::Name => 1.1
+			   }, 
 );

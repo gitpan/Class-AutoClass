@@ -7,3 +7,6 @@ Revision history
 0.03  Mon Jan 12 17:13:33 PST 2004
         - more documentation changes 
         - removed Class::WeakSingleton dependency
+0.04  Thu Feb 19 09:39:57 PST 2004
+        - removed Clone dependency 
+	- refactored AutoDB hooks

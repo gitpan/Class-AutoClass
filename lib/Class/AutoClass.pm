@@ -1,14 +1,11 @@
 package Class::AutoClass;
 use strict;
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 use vars qw($AUTOCLASS $AUTODB @ISA %CACHE);
 $AUTOCLASS=__PACKAGE__;
 use Class::AutoClass::Root;
 use Class::AutoClass::Args;
-use Storable qw(dclone); ## TODO : need this anymore?
-use Clone;
 @ISA=qw(Class::AutoClass::Root);
-use Data::Dumper; ## only for debugging
 
 sub new {
   my($class,@args)=@_;
@@ -27,8 +24,17 @@ sub new {
   while(my($keyword,$value)=each %$defaults) {
     $args->{$keyword}=$value unless exists $args->{$keyword};
   }
-  for my $class (@$classes) {
-    $self->_init($class,$args,$defaults);
+  for my $this (@$classes) {
+  	#if($this eq 'Class::AutoDB') {
+      ## this would be where to cache a handle to
+      ## AutoDB instance so that an AutoDB-able
+      ## object can hold its own reference
+  	#}
+  	if(exists ${Class::AutoDB::remember}{$this}){
+  	  no strict 'refs';
+  	  $self->{'__persist'}=1;
+  	}
+  	$self->_init($this,$args,$defaults);
   }
   $self;
 }
@@ -115,23 +121,11 @@ sub DEFAULTS_ARGS {
   no strict 'refs';
   @_? ${$class.'::DEFAULTS_ARGS'}=$_[0]: ${$class.'::DEFAULTS_ARGS'};
 }
-sub CASE {
-  my $class=shift @_;
-  $class=$class->class if ref $class; # get class if called as object method
-  no strict 'refs';
-  ${$class.'::CASE'};
-}
-sub FORCE_NEW {
-  my $class=shift @_;
-  $class=$class->class if ref $class; # get class if called as object method
-  no strict 'refs';
-  ${$class.'::FORCE_NEW'};
-}
 sub AUTODB {
   my($class)=@_;
   $class=$class->class if ref $class; # get class if called as object method
   no strict 'refs';
-  %{$class.'::AUTODB'}
+  %{$class.'::AUTODB'};
 }
 sub ANCESTORS {
   my $class=shift @_;
@@ -146,6 +140,12 @@ sub CAN_NEW {
   no strict 'refs';
   @_? ${$class.'::CAN_NEW'}=$_[0]: ${$class.'::CAN_NEW'};
 }
+sub FORCE_NEW {
+  my $class=shift @_;
+  $class=$class->class if ref $class; # get class if called as object method
+  no strict 'refs';
+  ${$class.'::FORCE_NEW'};
+}
 
 sub declare {
   my($class,$case)=@_;
@@ -153,22 +153,18 @@ sub declare {
   my $synonyms={SYNONYMS($class)};
   my %autodb=AUTODB($class);
   if (%autodb) {
+  	no strict 'refs';
     require 'Class/AutoDB.pm';
-    $autodb{'-class'}=$class;
-    my $args = Class::AutoClass::Args->new(%autodb);
-    my $autodb = Class::AutoDB->new($args);
-    $autodb->auto_register(%autodb);
-    $autodb->registry->name2coll->{$class}->{__persist} = 1;
-    ## TODO: is this still needed?
-    unless ($CACHE{'AUTODB'}){
-      $CACHE{'AUTODB'}=Clone::clone($autodb); # keep global record
-      $CACHE{'AUTODB'}->dbh($autodb->dbh); # otherwise DBI obj goes away
-    }
-    #for implicitly created objects (no explicit call to autodb constructor, connect by passing DB args)
-    if($autodb{'-dsn'}){
-      $autodb->_manage_registry($args);
-      $autodb->registry->create unless $autodb->exists;
-    }
+    my $args = Class::AutoClass::Args->new(%autodb, -class=>$class);
+    ## TODO: better left to a helper class (like Lookup)?
+    # remeber the collection so that we can store it later
+    ${Class::AutoDB::remember}{$args->collection}=$args->class;
+    ## TODO: auto_register should just get $args
+    Class::AutoDB::auto_register(%autodb,-class=>$class);
+    #if($autodb{'-dsn'}){
+    #  $autodb->_manage_registry($args);
+    #  $autodb->registry->create unless $autodb->exists;
+    #}
   }
 
   # enumerate internal super-classes and find an external class to create object
@@ -198,7 +194,6 @@ sub declare {
     my $sub='*'.$class.'::'.$func."=sub {\$_[0]->$old_func(\@_[1..\$\#_])}";
     eval $sub;
   }
-  defined $case or $case=CASE($class); # NG 04-01-09 -- allow $CASE to control this
   if ($case=~/lower|lc/i) {	# create lowercase versions of each method, too
     for my $func (@$attributes) {
       my $lc_func=lc $func;
@@ -261,14 +256,10 @@ sub _is_positional {
 sub DESTROY {
  my $self = shift;
  my $classname = ref($self);
-
- # write the persistable class, don't write proxyobj's or we'll have circular references
- if($CACHE{AUTODB}) {
-   my $registry = $CACHE{AUTODB}->registry;
-   my ($result) = map {grep $classname, $_} $registry->collections;
-   if($result->name eq $classname && $result->{__persist}) {
-     $CACHE{AUTODB}->store($self, $classname);
-   }
+ 
+ if($self->{__persist} || $self->{__proxyobj}) {
+  $self->throw("No AutoDB object was created") unless $Class::AutoDB::AUTODB;
+  $Class::AutoDB::AUTODB->store($self,$classname);
  }
 }
 
@@ -280,191 +271,47 @@ __END__
 
 =head1 NAME
 
-Class::AutoClass - Automatically generate simple get and set methods and
+Class::AutoClass - Automatically define simple get and set methods and
 automatically initialize objects in a (possibly mulitple) inheritance
 structure
 
 =head1 SYNOPSIS
 
-=head2 Define class that uses AutoClass
-
-TestClass defines three attributes that are automatically generated -- scalar_attribute, array_attribute, and hash_attribute -- and one attribute that is coded explicitly -- manual_attribute.  The class also defines synonyms for two of these attributes and provides default values for three of them.
-
-  package TestClass;
-  use strict;
-  use vars qw(@ISA @AUTO_ATTRIBUTES @OTHER_ATTRIBUTES %SYNONYMS %DEFAULTS);
+  package SubClass;
   use Class::AutoClass;
-  @ISA=qw(Class::AutoClass);               # AutoClass must be the first super-classs!
-  @AUTO_ATTRIBUTES= qw(scalar_attribute 
-  		       array_attribute 
-  		       hash_attribute);
-  @OTHER_ATTRIBUTES=qw(manual_attribute);
-  %SYNONYMS=          (scalar=>'scalar_attribute',
-                       manual=>'manual_attribute');
-  %DEFAULTS=          (manual_attribute=>'a default message',
-  		       array_attribute=>[], 
-  		       hash_attribute=>{});
-  Class::AutoClass::declare(__PACKAGE__);
-  
+  use SomeOtherClass;
+  @ISA=qw(AutoClass SomeOtherClass);
+
+  BEGIN {
+    @AUTO_ATTRIBUTES=qw(name sex address dob);
+    @OTHER_ATTRIBUTES=qw(age);
+    %SYNONYMS=(gender=>'sex');
+    $CASE='upper';
+    Class::AutoClass::declare(__PACKAGE__);
+  }
+
+  sub age {print "Calculate age from dob. NOT YET IMPLEMENTED\n"; undef}
 
   sub _init_self {
     my($self,$class,$args)=@_;
     return unless $class eq __PACKAGE__; # to prevent subclasses from re-running this
-
-    if (defined $self->scalar) {
-      push(@{$self->array_attribute},$self->scalar);
-      $self->hash_attribute->{$self->scalar}=1
-    }
-  return;
+    print __PACKAGE__.'::_init_self: ',"$class\n";
   }
-  
-  # Hand coded get/set method for manual_attribute
-  sub manual_attribute {
-    my $self=shift;
-    if (@_) {
-      my $manual_attribute=shift @_;
-      $self->{manual_attribute}="A manual attribute for class ".ref($self).
-        ": $manual_attribute";
-    }
-    return $self->{manual_attribute};
-  }
-
-The first two lines after the package statement -- 'use strict' and
-'use vars ...' -- are optional, but highly recommended.
-
-If a class has multiple super-classes, AutoClass, or a subclass of
-AutoClass, must be the first one listed in the @ISA definition.
-
-The _init_self method is called by AutoClass after
-auto-initialization.  This is where you put all your explicit
-initialization, ie, the code you probably would put in your 'new'
-method if you weren't using AutoClass.
-
-To illustrate explicit initialization, the example puts the
-scalar_attribute into the array_attribute and hash_attribute.  Note
-that array_attribute and hash_attribute are already initialized to
-their default values of [] and {} respectively, so the dereferencing
-operations (@ and ->) need not woory about being called on undefined
-values.
-
-If a subclass does not define its own _init_self method, the one
-defined in the parent class will be run.  This is often undesirable,
-and the example code shows our standard idiom for causing the method
-to return immediately if run in a subclass.
-
-=head2 A Perl application that uses the defined class
-
-  use strict;
-  use TestClass;
-  
-  # First define a helper subroutine to print the test objects
-  # Note that it accesses the contents of the object using the auto-generated
-  # or manually written get methods
-  sub pr_test {
-    my($test)=@_;
-    print "TestClass:\n"; 
-    print "scalar_attribute=>",$test->scalar_attribute,"\n";
-    print "array_attribute=>[",join(', ',@{$test->array_attribute}),"]\n";
-    print "hash_attribute=>{";
-    while (my ($key,$value) = each %{$test->hash_attribute}) {
-      print "\n    $key\t=> $value";
-    }
-    print "}\n";
-    print "manual_attribute=>",$test->manual_attribute,"\n";
-    print "\n";
-  }
- 
-  # Now for the main program
-  
-  # Create empty object.  
-  # Note that default values for array_attribute and hash_attribute are automatically set
-  my $test=new TestClass;
-  pr_test $test;
-  
-  # Set some of the object's attributes
-  $test->scalar_attribute('A scalar value');
-  $test->array_attribute(['An', 'array', 'value']);
-  $test->hash_attribute({'A key'=>'A value', 'Another key'=>'Another value'});
-  pr_test $test;
-  
-  # Create object with a scalar value
-  # Note that _init_self adds the scalar value to the array_attribute and hash_attribute
-  my $test=new TestClass(-scalar_attribute=>'hello world');
-  pr_test $test;
-  
-  # Same thing, but uses the synonym 'scalar' instead of 'scalar_attribute'
-  my $test=new TestClass(-scalar=>'hello world');
-  pr_test $test;
-  
-  # Create object with manual_attribute.
-  # Note that 'manual_attribute' can be auto-initialized even though the set method is not
-  #   auto-generated
-  my $test=new TestClass(-manual_attribute=>'an explicitly set value');
-  pr_test $test;
-
-Here is the output of the program
-
-  TestClass:
-  scalar_attribute=>
-  array_attribute=>[]
-  hash_attribute=>{}
-  manual_attribute=>A manual attribute for class TestClass: a default value
-  
-  TestClass:
-  scalar_attribute=>A scalar value
-  array_attribute=>[An, array, value]
-  hash_attribute=>{
-      A key       => A value
-      Another key => Another value}
-  manual_attribute=>A manual attribute for class TestClass: a default value
-  
-  TestClass:
-  scalar_attribute=>hello world
-  array_attribute=>[hello world]
-  hash_attribute=>{
-      hello world => 1}
-  manual_attribute=>A manual attribute for class TestClass: a default value
-  
-  TestClass:
-  scalar_attribute=>hello world
-  array_attribute=>[hello world]
-  hash_attribute=>{
-      hello world => 1}
-  manual_attribute=>A manual attribute for class TestClass: a default value
-  
-  TestClass:
-  scalar_attribute=>
-  array_attribute=>[]
-  hash_attribute=>{}
-  manual_attribute=>A manual attribute for class TestClass: an explicitly set value
 
 =head1 DESCRIPTION
 
-  1) Simple 'get' and 'set' methods are automatically generated
+  1) get and set methods for simple attributes can be automatically
+  generated
 
-  2) Keyword argument lists are handled as described below
+  2) argument lists are handled as described below
 
-  3) Object 'attributes' are automatically initialized from keyword
-  parameters, class defaults, or parameter defaults.  This includes
-  attributes for which the 'get' and 'set' methods are maually
-  written, as well as those that are auto-generated
-
-  3) The protocol for object creation and initialization is close to
+  3) the protocol for object creation and initialization is close to
   the 'textbook' approach generally suggested for object-oriented Perl
   (see below)
 
-  4) Object initialization is handled correctly in the presence of
-  multiple inheritance
+  4) object initialization is handled correctly in the presence of multiple inheritance
 
-  5) It works for a class to inherit from AutoClass and other classes
-  that are not descendants of AutoClass.  This makes it possible to
-  use AutoClass in cases where you are subclassing from an existing
-  class library.  In such cases, AutoClass lets the external classes
-  create the object and do their initialization first before taking
-  over.  This is required for correct object initialization in the
-  presence of multiple inheritance
-
-The following variables control the operation of the class. 
+The variables in the BEGIN block control the operation of the class. 
 
   @AUTO_ATTRIBUTES is a list of 'attribute' names: get and set methods
   are created for each attribute.  By default, the name of the method
@@ -472,96 +319,119 @@ The following variables control the operation of the class.
   attributes can be set via the 'new' constructor or the 'set' method
   as discussed below.
 
-  @OTHER_ATTRIBUTES is a list of attributes for which get and set
-  methods are NOT automatically generated, but whose values can be set
-  via the 'new' constructor or the 'set' method as discussed below.
+ @OTHER_ATTRIBUTES is a list of attributes for which get and set
+ methods are NOT generated, but whose values can be set via the 'new'
+ constructor or the 'set' method as discussed below.
 
   %SYNONYMS is a hash that defines synonyms for attribues. Each entry
   is of the form 'new_attribute_name'=>'old_attribute_name'.  get and
   set methods are generated for the new names; these methods simply
   call the method for the old name.
 
-  %DEFAULTS defines class default values for any or all attributes.
-  Default values can also be set by passing a parameter called
-  'defaults'
-
   $CASE controls whether additional methods are generated with all
   upper or all lower case names.  It should be a string containing the
   strings 'upper' or 'lower' (case insenstive) if the desired case is
   desired.
 
-  $FORCE_NEW should be set to 1 if AutoClass should take
-  responsibility for creating the object even if an 'external' (ie,
-  non-AutoClass) super-class is capable of doing so.  Normally, if an
-  external class in the inheritance structure wants to create the
-  object, AutoClass will defer to it.  This sometimes fails if the
-  super-class is not designed to allow graceful sub-classing.  In such
-  cases, setting $FORCE_NEW can sometime remedy the problem.
+The declare function in the BEGIN block actually generates the method.
+This should be called once in the BEGIN block and no where else.
 
-The 'declare' function actually generates the methods and 
-analyzes the @ISA structure in various ways.  This should be called
-once at the beginning of the class definition, and no where else.
-
-If a class has multiple super-classes, AutoClass, or a subclass of
-AutoClass, must be the first one listed in the @ISA definition.  This
-is to ensure that AutoClass's 'new' method is the one that's called
-when you create an object.  (If an external classes in the inheritance
-structure wants to create the object, AutoClass will defer to it as
-explained above.  Even in this case, AutoClass must be first so its
-'new' can orchestrate the processing.)
-
+AutoClass must be the first class in @ISA !! As usual, you create
+objects by calling 'new'. Since AutoClass is the first class in @ISA,
+it's 'new' method is the one that's called.  AutoClass's 'new'
+examines the rest of @ISA and searches for a superclass that is
+capable of creating the object.  If no such superclass is found,
+AutoClass creates the object itself.  Once the object is created,
+AutoClass arranges to have all subclasses run their initialization
+methods (_init_self) in a top-down order.
 
 =head2 Argument Processing
 
-The AutoClass 'new' method, and the auxillary methods 'set' and
-'set_attributes' operate on keyword parameter lists.  The actually
-argument processing is provided in the related class
-Class::AutoClass::Args.
+We support positional and keyword argument lists, but we strongly urge 
+that each method pick one form or the other, as the combination is inherently ambiguous (see below).
 
-Keywords are insensitive to case and leading dashes: the following calls are all equivalent:
+Consider a method, foo, that takes two arguments, a first name and a
+last_name name.  The positional form might be
 
-  $test=new TestClass(-scalar_attribute=>'hello world');
-  $test=new TestClass(scalar_attribute=>'hello world');
-  $test=new TestClass(--SCALAR_attribute=>'hello world');
+  $object->foo('Nat', 'Goodman')
 
-Internally, for those who care, our convention is to use lowercase,
-un-dashed keys for the attributes of an object.
+while the keyword form might be
 
-We convert repeated keyword arguments into an ARRAY of the values. Thus:
+  $object->foo(first_name=>'Nat', last_name=>'Goodman')
 
-  $test=new TestClass(array_attribute->'An',array_attribute->'array',array_attribute->'value');
+In keyword form, keywords are insensitive to case and leading
+dashes: the keywords
+
+  first_name, -first_name, -FIRST_NAME, --FIRST_NAME, First_Name, -First_Name
+
+are all equivalent.  Internally, for those who care, our convention is
+to use uppercase, un-dashed keys for the attributes of an object.
+
+We convert repeated keyword arguments into an ARRAY ref of the values. Thus:
+
+  $object->foo(first_name=>'Nat', first_name=>'Nathan')
 
 is equivalent to
 
-  $test=new TestClass(array_attribute->['An', 'array', 'value']);
+  $object->foo(first_name=>['Nat', 'Nathan'])
 
-Keyword arguments can be specified via ARRAYs or HASHes which are
-dereferenced back to their elements, e.g.,
+Keyword arguments can be specified via ARRAY or HASH
+refs which are dereferenced back to their elements, e.g.,
 
-  $test=new TestClass([scalar_attribute=>'A scalar value',
-                       array_attribute=>['An', 'array', 'value'],
-                       hash_attribute=>{'A key'=>'A value', 'Another key'=>'Another value'}]);
+  $object->foo([first_name=>'Nat', last_name=>'Goodman'])
 
-and
-
-  $test=new TestClass({scalar_attribute=>'A scalar value',
-                       array_attribute=>['An', 'array', 'value'],
-                       hash_attribute=>{'A key'=>'A value', 'Another key'=>'Another value'}});
+  $object->foo({first_name=>'Nat', last_name=>'Goodman'})
 
 are both equivalent to 
 
-  $test=new TestClass(scalar_attribute=>'A scalar value',
-                      array_attribute=>['An', 'array', 'value'],
-                      hash_attribute=>{'A key'=>'A value', 'Another key'=>'Another value'});
+  $object->foo(first_name=>'Nat', last_name=>'Goodman')
+
+We can get away with this, because we encourage method writers to
+choose between positional and keyword argument lists.  If a method
+uses positional arguments, it will interpret
+
+  $object->foo($array)
+
+as a call that is setting the first_name parameter to $array, while if
+it uses keyword arguments, it will dereference the array to a list of
+keyword, value pairs.
 
 We also allow the argument list to be an object.  This is often used
 in new to accomplish what a C++ programmer would call a cast.  In
-simple cases, the object is just treated as a HASH and its
+simple cases, the object is just treated as a HASH ref and its
 attributes are passed to a the method as keyword, value pairs.
+
+=head2 Why the Combination of Positional and Keyword Forms is Ambiguous
+
+The keyword => value notation is just a Perl shorthand for stating two
+list members with the first one quoted.  Thus,
+
+  $object->foo(first_name=>'Nat', last_name=>'Goodman')
+
+is completely equivalent to 
+
+  $object->foo('first_name', 'Nat', 'last_name', 'Goodman')
+
+The ambiguity of allowing both positional and keyword forms should now
+be apparent. In this example,
+
+  $object->foo('first_name', 'Nat')
+
+there is s no way to tell whether the program is calling foo with the
+first_name parameter set to the value 'first_name' and the last_name
+parameter set to 'Nat', vs. calling foo with the first_name parameter
+set to 'Nat' and the last_name parameter left undefined.
+
+If a program wishes to permit both forms, we suggest that keywords be 
+required to start with '-' (and that values do not start with '-').  
+Obviously, this is not fully general. We provide a method, _is_positional, 
+that checks this convention. Subclasses are free to ignore this.
 
 =head2 Protocol for Object Creation and Initializaton
 
-We expect objects to be created by invoking new on its class.  
+We expect objects to be created by invoking new on its class.  For example
+
+  $object = new SomeClass(first=>'Nat', last=>'Goodman')
 
 To correctly initialize objects that participate in multiple inheritance, 
 we use a technqiue described in Chapter 10 of Paul Fenwick''s excellent 
@@ -570,7 +440,16 @@ tutorial on Object Oriented Perl (see http://perltraining.com.au/notes/perloo.pd
 pseudo-pseudo-class discussed in Chapter 11 of Fenwick's tutorial
 available in CPAN at http://search.cpan.org/author/DCONWAY/NEXT-0.50/lib/NEXT.pm, 
 but could not get it to traverse the inheritance structure in the correct,
-top-down order.  We understand the problem is now fixed.)
+top-down order.)
+
+AutoClass class provides a 'new' method that expects a keyword argument
+list.  This method processes the argument list as discussed in
+L<Argument Processing>: it figures out the syntactic form (list of
+keyword, value pairs, vs. ARRAY ref vs. HASH ref, etc.).  It then
+converts the argument list into a canonical form, which is a list of
+keyword, value pairs with all keywords uppercased and de-dashed.  Once
+the argument list is in this form, subsequent code treats it as a HASH
+ref.
 
 AutoClass::new initializes the object's class structure from top to
 bottom, and is careful to initialize each class exactly once even in
@@ -587,156 +466,23 @@ initialization for the class has been done.
 
 AutoClass initializes attributes and synonyms by calling the set methods
 for these elements with the like-named parameter -- it does not simply
-slam the parameter into a slot in the object's HASH.  This allows the
-class writer to implement non-standard initialization within the set
+slam the parameter into a slot in the object''s HASH.  This allows the
+class writer implement non-standard initialization within the set
 method.
 
-=head2 Example illustrating multiple inheritance
+The main case where a subclass needs its own 'new' method is if it
+wishes to allow positional arguments. In this case, the subclass 'new'
+is responsible for is responsible for recognizing that positional
+arguments are being used (if the class permits keyword arguments
+also), and converting the positional arguments into keyword, value
+form.  At this point, the method can simply call AutoClass::new with
+the converted argument list.
 
-This example illustrates the operation of AutoClass in a multiple
-inheritance situation. The classes A, B, C, and D form a classic
-diamond inheritance pattern:
-
-     A
-   /  \
-  B    C
-   \  /
-    D
-
-The example also illustrates that attributes are inherited by
-subclasses, as you would expect.  It also show the use of %SYNONYMS to
-override a method as we work down the inheritance structure.
-
-In practice, you should usually put each package in a separate file.
-The example puts them all in one file for expository convenience.
-
-  use Class::AutoClass;
-  use Data::Dumper;		# just for printing out objects
-  use strict;
-  
-  package A;
-  use vars qw(@ISA @AUTO_ATTRIBUTES @OTHER_ATTRIBUTES %SYNONYMS %DEFAULTS);
-  @ISA=qw(Class::AutoClass);
-  @AUTO_ATTRIBUTES=qw(a_attr array);
-  @OTHER_ATTRIBUTES=qw(message);
-  %SYNONYMS=(best_attr=>'a_attr');
-  %DEFAULTS=(a_attr=>'class default for a_attr',
-  	     array=>[]);
-  Class::AutoClass::declare(__PACKAGE__);
-  
-  sub _init_self {
-    my($self,$class,$args)=@_;
-  #  return unless $class eq __PACKAGE__; # to prevent subclasses from re-running this
-    print "+++ Initializing $class\n";
-    push(@{$self->array},"Initializing $class");
-  }
-  
-  package B;
-  use vars qw(@ISA @AUTO_ATTRIBUTES @OTHER_ATTRIBUTES %SYNONYMS %DEFAULTS);
-  @ISA=qw(A);
-  @AUTO_ATTRIBUTES=qw(b_attr);
-  @OTHER_ATTRIBUTES=qw();
-  %SYNONYMS=(best_attr=>'b_attr');
-  %DEFAULTS=(b_attr=>'class default for b_attr');
-  Class::AutoClass::declare(__PACKAGE__);
-  
-  package C;
-  use vars qw(@ISA @AUTO_ATTRIBUTES @OTHER_ATTRIBUTES %SYNONYMS %DEFAULTS);
-  @ISA=qw(A);
-  @AUTO_ATTRIBUTES=qw(c_attr);
-  @OTHER_ATTRIBUTES=qw();
-  %SYNONYMS=(best_attr=>'c_attr');
-  %DEFAULTS=(c_attr=>'class default for c_attr');
-  Class::AutoClass::declare(__PACKAGE__);
-  
-  package D;
-  use vars qw(@ISA @AUTO_ATTRIBUTES @OTHER_ATTRIBUTES %SYNONYMS %DEFAULTS);
-  @ISA=qw(B C);
-  @AUTO_ATTRIBUTES=qw(d_attr);
-  @OTHER_ATTRIBUTES=qw();
-  %SYNONYMS=(best_attr=>'d_attr');
-  %DEFAULTS=(d_attr=>'class default for d_attr');
-  Class::AutoClass::declare(__PACKAGE__);
-  
-  package main;
-  
-  sub pr {print Dumper(@_);}
-  
-  print "A:\n"; my $a=new A; pr $a; print "\$a->best_attr => ",$a->best_attr,"\n";
-  print "B:\n"; my $b=new B; pr $b; print "\$b->best_attr => ",$b->best_attr,"\n";
-  print "C:\n"; my $c=new C; pr $c; print "\$c->best_attr => ",$c->best_attr,"\n";
-  print "D:\n"; my $d=new D; pr $d; print "\$d->best_attr => ",$d->best_attr,"\n";
-
-The example creates an object of each class, prints the message 
-
-  "+++ Initializing $class\n" 
-
-as it initializes each superclass, and also
-pushes that information onto its 'array' attribute.  The examnple then
-prints the object (using Data::Dumper) and also prints the value of
-the 'best_attr' attribute to illustrate that the attributes gets
-overridden as expected.
-
-Here is the output:
-
-  A:
-  +++ Initializing A
-  $VAR1 = bless( {
-                   'array' => [
-                                'Initializing A'
-                              ],
-                   'a_attr' => 'class default for a_attr'
-                 }, 'A' );
-  $a->best_attr => class default for a_attr
-  B:
-  +++ Initializing A
-  +++ Initializing B
-  $VAR1 = bless( {
-                   'array' => [
-                                'Initializing A',
-                                'Initializing B'
-                              ],
-                   'a_attr' => 'class default for a_attr',
-                   'b_attr' => 'class default for b_attr'
-                 }, 'B' );
-  $b->best_attr => class default for b_attr
-  C:
-  +++ Initializing A
-  +++ Initializing C
-  $VAR1 = bless( {
-                   'c_attr' => 'class default for c_attr',
-                   'array' => [
-                                'Initializing A',
-                                'Initializing C'
-                              ],
-                   'a_attr' => 'class default for a_attr'
-                 }, 'C' );
-  $c->best_attr => class default for c_attr
-  D:
-  +++ Initializing A
-  +++ Initializing B
-  +++ Initializing C
-  +++ Initializing D
-  $VAR1 = bless( {
-                   'd_attr' => 'class default for d_attr',
-                   'c_attr' => 'class default for c_attr',
-                   'array' => [
-                                'Initializing A',
-                                'Initializing B',
-                                'Initializing C',
-                                'Initializing D'
-                              ],
-                   'a_attr' => 'class default for a_attr',
-                   'b_attr' => 'class default for b_attr'
-                 }, 'D' );
-  $d->best_attr => class default for d_attr
-
-
-Initialization occurs top-down as required.  When creating an object
-of class D, the A-initialization happens first, then B and C in either
-order, then D.  The A-initialization only happens once even though D
-inherits from A along two paths.
-
+The subclass should not generally call SUPER::new as this would force
+redundant argument processing in any super-class that also has its own
+new.  It would also force the super-class new to be smart enough to
+handle positional as well as keyword parameters, which as we've noted
+is inherently ambiguous.
 
 =head1 KNOWN BUGS AND CAVEATS
 
@@ -744,57 +490,37 @@ This is still a work in progress.
 
 =head2 Bugs, Caveats, and ToDos
 
-There are numerous CPAN modules that overlap the functionality of
-AutoClass, including Class::MakeMethods, Class::Multimethods,
-Class::Translucent, Class::NamedParms, among others.  CGI.pm and
-BioPerl also provide similar keyword parameter processing.  We've
-borrowed ideas from some of these modules, but have chosen not to use
-any of their code in this alpha release on the grounds that the hard
-part of building something like AutoClass is deciding what
-capabilities it should provide, and finding easy ways for programmers
-to access these capabilities.  The code itself is relatively
-straightforward.  Now that we're closer to knowing what we want
-AutoClass to do, an important next step will be to incorporate some of these
-other modules in cases where they provide the capabilities we want in a better
-manner.
+  1) There is no way to manipulate the arguments that are sent to the
+  real base class. There should be a way to specify a subroutine that
+  reformats these if needed.
 
-  1) Autogeneration of methods is hand crafted and quite wimpy
-  compared to Class::MakeMethods or Class::Multimethods.
+  2) DESTROY not handled
 
-  2) There is no way to manipulate the arguments that are sent to an
-  external base class. There should be a way to specify a subroutine
-  that reformats these if needed.
+  3) Autogeneration of methods is hand crafted.  It may be better to
+  use Class::MakeMethods or Damian Conway's Multimethod class for
+  doing signature-based method dispatch
 
-  3) DESTROY not handled
-
-  4) We do not consistently use the '_' prefix on method names for
-  internal methods.
-
-  5) It's klunky to use so many global variables to control the
-  operation of the class.  This just grew.  It may be better to
-  consolidate them all in a single HASH. 
-
-=head1 AUTHOR - Nat Goodman, Chris Cavnor
+=head1 AUTHOR - Nat Goodman
 
 Email natg@shore.net
 
 =head1 COPYRIGHT
 
-Copyright (c) 2004 Institute for Systems Biology (ISB). All Rights Reserved.
+Copyright (c) 2003 Institute for Systems Biology (ISB). All Rights Reserved.
 
 This module is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself.
 
-=head1 PUBLIC METHODS
+=head1 APPENDIX
 
-These methods can be used by code that operates on an AutoClass subclass.
+The rest of the documentation describes the methods.  Note that
+internal methods are preceded with _
 
 =head2 new
 
  Title   : new
- Usage   : $test=new TestClass(scalar_attribute=>'A scalar value',
-                               array_attribute=>['An', 'array', 'value'])
-           where TestClass is a subclass of AutoClass
+ Usage   : $object=new Foo(first_name=>'Nat', last_name=>'Goodman')
+           where Foo is a subclass of AutoClass
  Function: Create and initialize object
  Returns : New object of class $class
  Args    : Any arguments needed by subclasses
@@ -802,73 +528,9 @@ These methods can be used by code that operates on an AutoClass subclass.
  Notes   : Tries to invoke superclass to actually create the object
 
 
-=head2 set
-
- Title   : set
- Usage   : $self->set(scalar_attribute=>'A scalar value',
-                      array_attribute=>['An', 'array', 'value']);
- Function: Set multiple attributes in existing object
- Args    : Parameter list in same format as for new
- Returns : nothing
-
-=head2 set_attributes
-
- Title   : set_attributes
- Usage   : $self->set_attributes([qw(scalar_attribute array_attribute)],$args)
- Function: Set multiple attributes from a Class::AutoClass::Args object
-           Any attribute value that is present in $args is set
- Args    : ARRAY ref of attributes
-           Class::AutoClass::Args object
- Returns : nothing
-
-=head2 get
-
- Title   : get
- Usage   : ($scalar,$array)=$self->get(qw(scalar_attribute,array_attribute))
- Function: Get values for multiple attributes
- Args    : Attribute names
- Returns : List of attribute values
-
-=head1 CLASS WRITER METHODS
-
-These methods are used when defining an AutoClass subclass.
-
-=head2 _init_self
-
- Title   : _init_self
- Usage   : $self->_init_self($class,$args)
- Function: Perform custom initialization of object
- Returns : nothing useful
- Args    : $class -- lexical (static) class being initialized, not the
-           actual (dynamic) class of $self
-           $arg -- argument list as a Class::AutoClass::Args object
- Notes   : Implemented by class writers, NOT by AutoClass itself.
-
-
-=head2 declare
-
- Title   : declare
- Usage   :   @AUTO_ATTRIBUTES=qw(sex address dob);
-             @OTHER_ATTRIBUTES=qw(age);
-             %SYNONYMS=(name=>'id');
-	     AutoClass::declare(__PACKAGE__,'lower|upper');
-	     
- Function: Generate get and set methods for simple attributes and synonyms.
-           Method names are identical to the attribute names including case
- Returns : nothing
- Args    : lexical class being created -- should always be __PACKAGE__
-           code that indicates whether method should also be generated
-            with all lower or upper case names
-            OBSOLETE: use $CASE variable, instead
-            
-=head1 PRIVATE METHODS
-
-These methods are used by AutoClass itself and are normally not
-invoked by programs that use AutoClass.
-
 =head2 _init
 
- Title   : _init_self
+ Title   : _init
  Usage   : $self->_init($class,$args)
  Function: Initialize new object
  Returns : nothing useful
@@ -878,6 +540,90 @@ invoked by programs that use AutoClass.
  Notes   : Adapted from Chapter 10 of Paul Fenwick''s excellent tutorial on 
            Object Oriented Perl (see http://perltraining.com.au/notes/perloo.pdf).
 
+=head2 set
+
+ Title   : set
+ Usage   : $self->set(-first_name=>'Nat',-last_name=>'Goodman')
+ Function: Set multiple attributes in existing object
+ Args    : Parameter list in same format as for new
+ Returns : nothing
+
+=head2 set_attributes
+
+ Title   : set_attributes
+ Usage   : $self->set_attributes([qw(first_name last_name)],$args)
+ Function: Set multiple attributes from a Class::AutoClass::Args object
+           Any attribute value that is present in $args is set
+ Args    : ARRAY ref of attributes
+           Class::AutoClass::Args object
+ Returns : nothing
+
+=head2 get
+
+ Title   : get
+ Usage   : ($first,$last)=$self->get(qw(-first_name,-last_name))
+ Function: Get values for multiple attributes
+ Args    : Attribute names
+ Returns : List of attribute values
+
+=head2 AUTO_ATTRIBUTES
+
+ Title   : AUTO_ATTRIBUTES
+ Usage   : @auto_attributes=AUTO_ATTRIBUTES('SubClass')
+           @auto_attributes=$self->AUTO_ATTRIBUTES();
+ Function: Get @AUTO_ATTRIBUTES for lexical class.
+           @AUTO_ATTRIBUTES is defined by class writer in a BEGIN
+           block. These are attributes for which get and set methods
+           are automatically generated.  _init automatically
+           initializes these attributes from like-named parameters in
+           the argument list
+ Args : class
+
+=head2 OTHER_ATTRIBUTES
+
+ Title   : OTHER_ATTRIBUTES
+ Usage   : @other_attributes=OTHER_ATTRIBUTES('SubClass')
+           @other_attributes=$self->OTHER_ATTRIBUTES();
+ Function: Get @OTHER_ATTRIBUTES for lexical class.
+           @OTHER_ATTRIBUTES is defined by class writer in a BEGIN
+           block. These are attributes for which get and set methods
+           are not automatically generated.  _init automatically
+           initializes these attributes from like-named parameters in
+           the argument list
+ Args : class
+
+=head2 SYNONYMS
+
+ Title   : SYNONYMS
+ Usage   : %synonyms=SYNONYMS('SubClass')
+           %synonyms=$self->SYNONYMS();
+ Function: Get %SYNONYMS for lexical class.
+           %SYNONYMS is defined by class writer in a BEGIN
+           block. These are alternate names for attributes generally
+           defined in superclasses.  get and set methods are
+           automatically generated.  _init automatically initializes
+           these attributes from like-named parameters in the argument
+           list
+ Args : class
+
+=head2 declare
+
+ Title   : declare
+ Usage   : BEGIN {
+             @AUTO_ATTRIBUTES=qw(sex address dob);
+             @OTHER_ATTRIBUTES=qw(age);
+             %SYNONYMS=(name=>'id');
+	     AutoClass::declare(__PACKAGE__,'lower|upper');
+	   }
+ Function: Generate get and set methods for simple attributes and synonyms.
+           Method names are identical to the attribute names including case
+ Returns : nothing
+ Args    : lexical class being created -- should always be __PACKAGE__
+           ARRAY ref of attributes
+           HASH ref of synonyms. Keys are new names, values are old
+           code that indicates whether method should also be generated
+            with all lower or upper case names
+            
 =head2 _enumerate
 
  Title   : _enumerate
@@ -956,117 +702,5 @@ invoked by programs that use AutoClass.
            which contains the arguments to set
  Returns : nothing
 
-=head2 AUTO_ATTRIBUTES
-
- Title   : AUTO_ATTRIBUTES
- Usage   : @auto_attributes=AUTO_ATTRIBUTES('SubClass')
-           @auto_attributes=$self->AUTO_ATTRIBUTES();
- Function: Get @AUTO_ATTRIBUTES for lexical class.
-           @AUTO_ATTRIBUTES are attributes for which get and set methods
-           are automatically generated.  _init automatically
-           initializes these attributes from like-named parameters in
-           the argument list
- Args :    class
-
-=head2 OTHER_ATTRIBUTES
-
- Title   : OTHER_ATTRIBUTES
- Usage   : @other_attributes=OTHER_ATTRIBUTES('SubClass')
-           @other_attributes=$self->OTHER_ATTRIBUTES();
- Function: Get @OTHER_ATTRIBUTES for lexical class.
-           @OTHER_ATTRIBUTES are attributes for which get and set methods
-           are not automatically generated.  _init automatically
-           initializes these attributes from like-named parameters in
-           the argument list
- Args :    class
-
-=head2 SYNONYMS
-
- Title   : SYNONYMS
- Usage   : %synonyms=SYNONYMS('SubClass')
-           %synonyms=$self->SYNONYMS();
- Function: Get %SYNONYMS for lexical class.
-           %SYNONYMS are alternate names for attributes generally
-           defined in superclasses.  get and set methods are
-           automatically generated.  _init automatically initializes
-           these attributes from like-named parameters in the argument
-           list
- Args :    class
-
-=head2 DEFAULTS
-
- Title   : DEFAULTS
- Usage   : %defaults=DEFAULTS('SubClass')
-           %defaults=$self->DEFAULTS();
- Function: Get %DEFAULTS for lexical class.
-           %DEFAULTS are class default values for parameters
- Args :    class
-
-=head2 DEFAULTS_ARGS
-
- Title   : DEFAULTS_ARGS
- Usage   : $defaults=DEFAULTS_ARGS('SubClass')
-           $defaults=$self->DEFAULTS_ARGS();
-           $defaults=DEFAULTS_ARGS('SubClass', $defaults)
-           $defaults=$self->DEFAULTS_ARGS($defaults);
- Function: Get or set class defaults for lexical class represented as 
-           Class::AutoClass::Args object.
-           Used internally in the course of default processing
- Args :    class
-           Class::AutoClass::Args object
-
-=head2 CASE
-
- Title   : CASE
- Usage   : $case=CASE('SubClass')
-           $case=$self->CASE();
- Function: Get $CASE for lexical class
-           Controls whether get and set methods with all upper- or lowercase 
-           names are auto-generated in addition to the methods whose names are
-           listed in @AUTO_ATTRIBUTES.
-           Rarely used in our experience.
- Args :    class
-
-=head2 FORCE_NEW
-
- Title   : FORCE_NEW
- Usage   : $force_new=FORCE_NEW('SubClass')
-           $force_new=$self->FORCE_NEW();
- Function: Get $FORCE_NEW for lexical class
-           Flag used to for AutoClass to create object even if an external 
-           superclass is capable of doing so.
-           Used in special cases to workaround problems in superclasses
- Args :    class
-
-=head2 AUTODB
-
- Title   : AUTODB
- Usage   : %auto_db=AUTODB('SubClass')
-           %auto_db=$self->AUTODB();
- Function: Get %AUTODB for lexical class
-           Control operation of AutoDB.  See Class::AutoDB for details.
- Args :    class
-
-=head2 ANCESTORS
-
- Title   : ANCESTORS
- Usage   : $ancestors=ANCESTORS('SubClass')
-           $ancestors=$self->ANCESTORS();
-           $ancestors=ANCESTORS('SubClass', $ancestors)
-           $ancestors=$self->ANCESTORS($ancestors);
- Function: Get or set superclasses in correct order for initialization
- Args :    class
-           ARRAY of class names
-
-=head2 CAN_NEW
-
- Title   : CAN_NEW
- Usage   : $can_new=CAN_NEW('SubClass')
-           $can_new=$self->CAN_NEW();
-           $can_new=CAN_NEW('SubClass', $can_new)
-           $can_new=$self->CAN_NEW($can_new);
- Function: Get or set flag indicating whether this class can creat the object
- Args :    class
-           boolean
-
 =cut
+
