@@ -1,6 +1,6 @@
 package Class::AutoClass;
 use strict;
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 use vars qw($AUTOCLASS $AUTODB @ISA %CACHE);
 $AUTOCLASS=__PACKAGE__;
 use Class::AutoClass::Root;
@@ -282,15 +282,13 @@ structure
   package SubClass;
   use Class::AutoClass;
   use SomeOtherClass;
-  @ISA=qw(AutoClass SomeOtherClass);
+  @ISA=qw(Class::AutoClass SomeOtherClass);
 
-  BEGIN {
     @AUTO_ATTRIBUTES=qw(name sex address dob);
     @OTHER_ATTRIBUTES=qw(age);
     %SYNONYMS=(gender=>'sex');
     $CASE='upper';
     Class::AutoClass::declare(__PACKAGE__);
-  }
 
   sub age {print "Calculate age from dob. NOT YET IMPLEMENTED\n"; undef}
 
@@ -313,7 +311,7 @@ structure
 
   4) object initialization is handled correctly in the presence of multiple inheritance
 
-The variables in the BEGIN block control the operation of the class. 
+The following variables control the operation of the class. 
 
   @AUTO_ATTRIBUTES is a list of 'attribute' names: get and set methods
   are created for each attribute.  By default, the name of the method
@@ -335,8 +333,8 @@ The variables in the BEGIN block control the operation of the class.
   strings 'upper' or 'lower' (case insenstive) if the desired case is
   desired.
 
-The declare function in the BEGIN block actually generates the method.
-This should be called once in the BEGIN block and no where else.
+The declare function actually generates the method.
+This should be called once and no where else.
 
 AutoClass must be the first class in @ISA !! As usual, you create
 objects by calling 'new'. Since AutoClass is the first class in @ISA,
@@ -574,8 +572,7 @@ internal methods are preceded with _
  Usage   : @auto_attributes=AUTO_ATTRIBUTES('SubClass')
            @auto_attributes=$self->AUTO_ATTRIBUTES();
  Function: Get @AUTO_ATTRIBUTES for lexical class.
-           @AUTO_ATTRIBUTES is defined by class writer in a BEGIN
-           block. These are attributes for which get and set methods
+           @AUTO_ATTRIBUTES are attributes for which get and set methods
            are automatically generated.  _init automatically
            initializes these attributes from like-named parameters in
            the argument list
@@ -587,8 +584,7 @@ internal methods are preceded with _
  Usage   : @other_attributes=OTHER_ATTRIBUTES('SubClass')
            @other_attributes=$self->OTHER_ATTRIBUTES();
  Function: Get @OTHER_ATTRIBUTES for lexical class.
-           @OTHER_ATTRIBUTES is defined by class writer in a BEGIN
-           block. These are attributes for which get and set methods
+           @OTHER_ATTRIBUTES are attributes for which get and set methods
            are not automatically generated.  _init automatically
            initializes these attributes from like-named parameters in
            the argument list
@@ -600,8 +596,7 @@ internal methods are preceded with _
  Usage   : %synonyms=SYNONYMS('SubClass')
            %synonyms=$self->SYNONYMS();
  Function: Get %SYNONYMS for lexical class.
-           %SYNONYMS is defined by class writer in a BEGIN
-           block. These are alternate names for attributes generally
+           %SYNONYMS are alternate names for attributes generally
            defined in superclasses.  get and set methods are
            automatically generated.  _init automatically initializes
            these attributes from like-named parameters in the argument
@@ -611,12 +606,11 @@ internal methods are preceded with _
 =head2 declare
 
  Title   : declare
- Usage   : BEGIN {
-             @AUTO_ATTRIBUTES=qw(sex address dob);
+ Usage   :   @AUTO_ATTRIBUTES=qw(sex address dob);
              @OTHER_ATTRIBUTES=qw(age);
              %SYNONYMS=(name=>'id');
 	     AutoClass::declare(__PACKAGE__,'lower|upper');
-	   }
+	     
  Function: Generate get and set methods for simple attributes and synonyms.
            Method names are identical to the attribute names including case
  Returns : nothing
