@@ -1,0 +1,13 @@
+## ==> supporting files
+Changes
+INSTALL
+Makefile.PL
+MANIFEST
+## ==> tests 
+t/AutoArgsTest.t
+t/AutoClassTest.t
+t/RootTest.t
+## ==> code 
+lib/Class/AutoClass.pm
+lib/Class/AutoClass/Args.pm
+lib/Class/AutoClass/Root.pm
