@@ -1,7 +1,7 @@
 package Class::AutoClass;
 use strict;
-our $VERSION = '0.05';
-use vars qw($AUTOCLASS $AUTODB @ISA %CACHE);
+our $VERSION = '0.06';
+use vars qw($AUTOCLASS $AUTODB @ISA %CACHE @EXPORT);
 $AUTOCLASS=__PACKAGE__;
 use Class::AutoClass::Root;
 use Class::AutoClass::Args;
@@ -25,17 +25,8 @@ sub new {
   while(my($keyword,$value)=each %$defaults) {
     $args->{$keyword}=$value unless exists $args->{$keyword};
   }
-  for my $this (@$classes) {
-  	#if($this eq 'Class::AutoDB') {
-      ## this would be where to cache a handle to
-      ## AutoDB instance so that an AutoDB-able
-      ## object can hold its own reference
-  	#}
-  	if(exists ${Class::AutoDB::remember}{$this}){
-  	  no strict 'refs';
-  	  $self->{'__persist'}=1;
-  	}
-  	$self->_init($this,$args,$defaults);
+  for my $class (@$classes) {
+  	$self->_init($class,$args,$defaults);
   }
   $self;
 }
@@ -76,13 +67,16 @@ sub set_attributes {
     $self->$func($args->{$keyword}) if exists $args->{$keyword};
   }
 }
-
 sub set_class_defaults {
   my($self,$attributes,$class,$args)=@_;
   my $class_defaults=DEFAULTS_ARGS($class);
   while(my($keyword,$value)=each %$class_defaults) {
-    next if exists $args->{$keyword};
-    $args->{$keyword}=ref $value? dclone($value): $value; # deep copy refs
+    if(exists $args->{$keyword}){
+      $self->{$keyword}=$value;
+    }
+    else{ 
+      $args->{$keyword}=ref $value? dclone($value): $value; # deep copy refs
+    }
   }
 }
 sub class {ref $_[0];}
@@ -120,7 +114,9 @@ sub DEFAULTS_ARGS {
   my $class=shift @_;
   $class=$class->class if ref $class; # get class if called as object method
   no strict 'refs';
-  @_? ${$class.'::DEFAULTS_ARGS'}=$_[0]: ${$class.'::DEFAULTS_ARGS'};
+  @_ ?
+    ${$class.'::DEFAULTS_ARGS'}=$_[0] : 
+    ${$class.'::DEFAULTS_ARGS'};
 }
 sub AUTODB {
   my($class)=@_;
@@ -132,7 +128,7 @@ sub ANCESTORS {
   my $class=shift @_;
   $class=$class->class if ref $class; # get class if called as object method
   no strict 'refs';
-  $_[0] = ref($_[0]) ? $_[0] : []; # keeping the peace  
+  $_[0] = ref($_[0]) ? $_[0] : []; # keeping the peace
   @_? ${$class.'::ANCESTORS'}=$_[0]: ${$class.'::ANCESTORS'};
 }
 sub CAN_NEW {
@@ -155,41 +151,30 @@ sub declare {
   my %autodb=AUTODB($class);
   if (%autodb) {
   	no strict 'refs';
+  	# make sure that AutoDBable class ISA SmartProxy
+  	push @{$class.'::ISA'}, "Class::AutoDB::SmartProxy";
     require 'Class/AutoDB.pm';
     my $args = Class::AutoClass::Args->new(%autodb, -class=>$class);
-    ## TODO: better left to a helper class (like Lookup)?
-    # remeber the collection so that we can store it later
-    ${Class::AutoDB::remember}{$args->collection}=$args->class;
     ## TODO: auto_register should just get $args
     Class::AutoDB::auto_register(%autodb,-class=>$class);
-    #if($autodb{'-dsn'}){
-    #  $autodb->_manage_registry($args);
-    #  $autodb->registry->create unless $autodb->exists;
-    #}
   }
 
   # enumerate internal super-classes and find an external class to create object
   my($ancestors,$can_new)=_enumerate($class);
+
   ANCESTORS($class,$ancestors);
   CAN_NEW($class,$can_new);
-
   # convert DEFAULTS hash into AutoArgs
   DEFAULTS_ARGS($class,new Class::AutoClass::Args(DEFAULTS($class)));
 
   for my $func (@$attributes) {
-  	my $sub;
-    my $keyword=Class::AutoClass::Args::fix_keyword($func);
-    if(%autodb){
-      $sub='*'.$class.'::'.$func."=sub {\@_>1?
-        \$_[0]->{\'$keyword\'}=Class::AutoDB::_freeze(\@_):
-        \$_[0]->{\'$keyword\'};}";	
-    } else {
-      $sub='*'.$class.'::'.$func."=sub {\@_>1? 
-        \$_[0]->{\'$keyword\'}=\$_[1]: 
-        \$_[0]->{\'$keyword\'};}";
-      }
-    eval $sub;
+      my $fixed_func=Class::AutoClass::Args::fix_keyword($func);
+      my $sub='*'.$class.'::'.$func."=sub{\@_>1?
+        \$_[0]->{\'$fixed_func\'}=\$_[1]: 
+        \$_[0]->{\'$fixed_func\'};}";
+      eval $sub;
   }
+    
   while(my($func,$old_func)=each %$synonyms) {
     next if $func eq $old_func;	# avoid infinite recursion if old and new are the same
     my $sub='*'.$class.'::'.$func."=sub {\$_[0]->$old_func(\@_[1..\$\#_])}";
@@ -251,16 +236,6 @@ sub __enumerate {
 
 sub _is_positional {
   @_%2 || $_[0]!~/^-/;
-}
-
-sub DESTROY {
- my $self = shift;
- my $classname = ref($self);
- 
- if($self->{__persist} || $self->{__proxyobj}) {
-  $self->throw("No AutoDB object was created") unless $Class::AutoDB::AUTODB;
-  $Class::AutoDB::AUTODB->store($self,$classname);
- }
 }
 
 1;
@@ -503,6 +478,10 @@ This is still a work in progress.
 =head1 AUTHOR - Nat Goodman
 
 Email natg@shore.net
+
+=head1 MAINTAINER - Christopher Cavnor
+
+Email ccavnor@systemsbiology.net
 
 =head1 COPYRIGHT
 

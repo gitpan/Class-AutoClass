@@ -49,7 +49,7 @@ methods. Internal methods are usually preceded with a _
 
 #'
 
-use vars qw(@ISA $DEBUG $ID $Revision $VERSION $VERBOSITY $ERRORLOADED);
+use vars qw(@ISA $DEBUG $ID $Revision $VERSION $VERBOSITY $ERRORLOADED @EXPORT);
 use strict;
 
 BEGIN { 
@@ -85,7 +85,6 @@ sub new {
     }
     return $self;
 }
-
 		     
 =head2 verbose
 

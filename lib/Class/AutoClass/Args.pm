@@ -16,7 +16,6 @@ sub get_args {
 }
 sub getall_args {
   my $self = shift;
-  #use Data::Dumper; print Dumper %$self;
   wantarray? %$self: {%$self};
 }
 sub set_args {
