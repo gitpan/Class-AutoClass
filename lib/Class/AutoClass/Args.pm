@@ -30,7 +30,7 @@ sub fix_keyword {
   my @keywords=@_;		# copies input, so update-in-place doesn't munge it
   for my $keyword (@keywords) {
     next unless defined $keyword;
-    $keyword=~s/^-*(.*)$/\L\1/ unless ref $keyword; # updates in place
+    $keyword=~s/^-*(.*)$/\L$1/ unless ref $keyword; # updates in place
   }
   wantarray? @keywords: $keywords[0];
 }

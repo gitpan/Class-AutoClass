@@ -10,3 +10,6 @@ Revision history
 0.04  Thu Feb 19 09:39:57 PST 2004
         - removed Clone dependency 
 	- refactored AutoDB hooks
+0.05  Mon Feb 23 11:12:43 PST 2004
+        - supressed a bunch of warnings throw when using -w flag
+	- use Storable added back to AutoClass

@@ -1,10 +1,11 @@
 package Class::AutoClass;
 use strict;
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 use vars qw($AUTOCLASS $AUTODB @ISA %CACHE);
 $AUTOCLASS=__PACKAGE__;
 use Class::AutoClass::Root;
 use Class::AutoClass::Args;
+use Storable qw(dclone);
 @ISA=qw(Class::AutoClass::Root);
 
 sub new {
@@ -223,7 +224,7 @@ sub _enumerate {
 
 sub __enumerate {
   my($classes,$types,$can_new,$class)=@_;
-  die "Circular inheritance structure. \$class=$class" if $types->{$class} eq 'pending';
+  die "Circular inheritance structure. \$class=$class" if (defined $types->{$class} && $types->{$class} eq 'pending');
   return $types->{$class} if defined $types->{$class};
   $types->{$class}='pending';
   my @isa;
@@ -231,13 +232,12 @@ sub __enumerate {
     no strict "refs"; 
     @isa=@{$class.'::ISA'};
   }
-  my $type;
+  my $type='external';
   for my $super (@isa) {
     $type='internal',next if $super eq $AUTOCLASS;
     my $super_type=__enumerate($classes,$types,$can_new,$super);
-    $type eq 'internal' or $type=$super_type;
+    $type=$super_type unless $type eq 'internal';
   }
-  $type or $type='external';
   if (!FORCE_NEW($class) && !$$can_new && $type eq 'internal') {
     for my $super (@isa) {
       next unless $types->{$super} eq 'external';
