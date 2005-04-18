@@ -1,7 +1,6 @@
 package Class::AutoClass::Args;
 use strict;
 use Carp;
-use Data::Dumper;
 
 sub new {
   my($class,@args)=@_;

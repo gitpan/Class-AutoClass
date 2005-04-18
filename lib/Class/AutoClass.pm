@@ -1,6 +1,6 @@
 package Class::AutoClass;
 use strict;
-our $VERSION = '0.09';
+our $VERSION = '0.091';
 use vars qw($AUTOCLASS $AUTODB @ISA %CACHE @EXPORT);
 $AUTOCLASS=__PACKAGE__;
 use Class::AutoClass::Root;
@@ -11,7 +11,7 @@ use Storable qw(dclone);
 sub new {
   my($class,@args)=@_;
   $class=(ref $class)||$class;
-  my $classes=$class->ANCESTORS;
+  my $classes=$class->ANCESTORS || []; # NG 04-12-03. In case declare not called
   my $can_new=$class->CAN_NEW;
   if (!@$classes) {		# compute on the fly for backwards compatibility
     #  # enumerate internal super-classes and find a class to create object
@@ -130,7 +130,7 @@ sub ANCESTORS {
   my $class=shift @_;
   $class=$class->class if ref $class; # get class if called as object method
   no strict 'refs';
-  $_[0] = ref($_[0]) ? $_[0] : []; # keeping the peace
+#  $_[0] = ref($_[0]) ? $_[0] : []; # keeping the peace
   @_? ${$class.'::ANCESTORS'}=$_[0]: ${$class.'::ANCESTORS'};
 }
 sub CAN_NEW {
@@ -152,22 +152,26 @@ sub declare {
   my $synonyms={SYNONYMS($class)};
   my %autodb=AUTODB($class);
   my $args;
-  if (%autodb) {
-  	no strict 'refs';
-  	# make sure that AutoDBable class ISA SmartProxy
-  	unshift @{$class.'::ISA'}, "Class::AutoDB::SmartProxy";
-    require 'Class/AutoDB.pm';
-    $args = Class::AutoClass::Args->new(%autodb, -class=>$class);
-    Class::AutoDB::auto_register($args);
-  }
-
   # enumerate internal super-classes and find an external class to create object
+  if (%autodb) {		# hack ISA before setting ancestors
+    no strict 'refs';
+    # add AutoDB::Object to @ISA if necessary
+    unless (grep /^Class::AutoDB::Object/,@{$class.'::ISA'}) {
+      unshift @{$class.'::ISA'},'Class::AutoDB::Object';
+    }
+    require 'Class/AutoDB.pm';
+  }
   my($ancestors,$can_new)=_enumerate($class);
 
   ANCESTORS($class,$ancestors);
   CAN_NEW($class,$can_new);
   # convert DEFAULTS hash into AutoArgs
   DEFAULTS_ARGS($class,new Class::AutoClass::Args(DEFAULTS($class)));
+
+  if (%autodb) {		# register after setting ANCESTORS
+    my $args=Class::AutoClass::Args->new(%autodb,-class=>$class); # TODO: spec says %AUTODB=(1) should work
+    Class::AutoDB::auto_register($args);
+  }
 
   for my $func (@$attributes) {
       my $fixed_func=Class::AutoClass::Args::fix_keyword($func);
