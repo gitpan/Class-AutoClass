@@ -1,6 +1,6 @@
 package Class::AutoClass;
 use strict;
-our $VERSION = '0.091';
+our $VERSION = '0.092';
 use vars qw($AUTOCLASS $AUTODB @ISA %CACHE @EXPORT);
 $AUTOCLASS=__PACKAGE__;
 use Class::AutoClass::Root;
@@ -159,7 +159,8 @@ sub declare {
     unless (grep /^Class::AutoDB::Object/,@{$class.'::ISA'}) {
       unshift @{$class.'::ISA'},'Class::AutoDB::Object';
     }
-    require 'Class/AutoDB.pm';
+    require 'Class/AutoDB/Object.pm'; 
+    require 'Class/AutoDB.pm'; # AutoDB.pm is needed for calling auto_register
   }
   my($ancestors,$can_new)=_enumerate($class);
 
@@ -167,7 +168,6 @@ sub declare {
   CAN_NEW($class,$can_new);
   # convert DEFAULTS hash into AutoArgs
   DEFAULTS_ARGS($class,new Class::AutoClass::Args(DEFAULTS($class)));
-
   if (%autodb) {		# register after setting ANCESTORS
     my $args=Class::AutoClass::Args->new(%autodb,-class=>$class); # TODO: spec says %AUTODB=(1) should work
     Class::AutoDB::auto_register($args);
