@@ -1,4 +1,4 @@
-package GrandChild;
+package GreatGrandChild;
 use strict;
 use Class::AutoClass;
 use Parent;
@@ -7,9 +7,9 @@ use vars
 @ISA              = qw(Child);
 @AUTO_ATTRIBUTES  = qw();
 @OTHER_ATTRIBUTES = qw();
-@CLASS_ATTRIBUTES = qw(species);
+@CLASS_ATTRIBUTES = qw();
 %SYNONYMS         = ();
-%DEFAULTS         = ( a => 'grandchild', species => 'schmoo' );
+%DEFAULTS         = ();
 Class::AutoClass::declare(__PACKAGE__);
 
 sub _init_self {
