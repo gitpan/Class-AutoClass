@@ -1,53 +1,163 @@
 package Class::AutoClass;
+our $VERSION = '1.49_01';
+
 use strict;
-our $VERSION = '0.093';
-use vars qw($AUTOCLASS $AUTODB @ISA %CACHE @EXPORT);
-$AUTOCLASS = __PACKAGE__;
-use Class::AutoClass::Root;
-use Class::AutoClass::Args;
+use Carp;
 use Storable qw(dclone);
-@ISA = qw(Class::AutoClass::Root);
+use Hash::AutoHash::Args qw(fix_keyword fix_keywords);
+use Class::AutoClass::Root;
+use base qw(Class::AutoClass::Root);
+
+use vars qw($AUTOCLASS $AUTODB %CACHE @EXPORT);
+$AUTOCLASS = __PACKAGE__;
 
 sub new {
- my ( $class, @args ) = @_;
- $class = ( ref $class ) || $class;
- my $classes = $class->ANCESTORS || [];    # NG 04-12-03. In case declare not called
- my $can_new = $class->CAN_NEW;
- if ( !@$classes ) {    # compute on the fly for backwards compatibility
+  # NG 09-11-07: when called 'from below' via SUPER::new, respect existing object
+  my ( $self_or_class, @args ) = @_;
+  my $class = ( ref $self_or_class ) || $self_or_class;
+  # NG 06-02-03: 1st attempt to call declare at runtime if not declared at compile-time
+  # declare($class) unless $class->DECLARED;
+  # NG 06-02-03: 2nd attempt to declare at runtime if not declared at compile-time
+  #              include $case and flag to indicate this is runtime
+  declare($class,CASE($class),'runtime') unless $class->DECLARED;
+
+  my $classes = $class->ANCESTORS || [];    # NG 04-12-03. In case declare not called
+  my $can_new = $class->CAN_NEW;
+  if ( !@$classes ) {    # compute on the fly for backwards compatibility
   # enumerate internal super-classes and find a class to create object
-  ( $classes, $can_new ) = _enumerate($class);
- }
- my $self = $can_new ? $can_new->new(@args) : {};
- bless $self, $class;    # Rebless what comes from new just in case
- my $args     = new Class::AutoClass::Args(@args);
- my $defaults = new Class::AutoClass::Args( $args->defaults );
+    ( $classes, $can_new ) = _enumerate($class);
+  }
+  # NG 09-11-07: when called 'from below' via SUPER::new, respect existing object
+  my $self;
+  if (ref $self_or_class) {
+    $self=$self_or_class;
+  } else {
+    $self = $can_new ? $can_new->new(@args) : {};
+    bless $self, $class;    # Rebless what comes from new just in case
+  }
+  my $args     = new Hash::AutoHash::Args(@args);
+  # NG 09-03-19: put defaults processing under 'if' since rarely used
+  #              minor efficiency gain (avoids creation of empty Args object)
+  if ($args->defaults) {
+    my $defaults = new Hash::AutoHash::Args( $args->defaults );
+    # set arg defaults into args
+    while ( my ( $keyword, $value ) = each %$defaults ) {
+      $args->{$keyword} = $value unless exists $args->{$keyword};
+    }}
 
- # set arg defaults into args
- while ( my ( $keyword, $value ) = each %$defaults ) {
-  $args->{$keyword} = $value unless exists $args->{$keyword};
- }
+################################################################################
+# NG 05-12-08: initialization strategy changed. instead of init'ing class by class
+#              down the hierarchy, it's now done all at once.
+ $self->_init($class,$args);	# init attributes from args and defaults
+
+# $defaults=new Hash::AutoHash::Args; # NG 05-12-07: reset $defaults. 
+#				       # will accumulate instance defaults during initialization
+# my $default2code={};
+
  for my $class (@$classes) {
-  $self->_init( $class, $args, $defaults );
+   my $init_self = $class->can('_init_self');
+   $self->$init_self( $class, $args ) if $init_self;
+   #  $self->_init( $class, $args, $defaults, $default2code );
  }
- return $self->{__NULLIFY__} ? undef: $self;
+################################################################################
+
+   if($self->{__NULLIFY__}) {
+   	return undef;
+   } elsif ($self->{__OVERRIDE__}) { # override self with the passed object
+      $self=$self->{__OVERRIDE__};
+      return $self;
+   } else {
+     return $self;
+   }
 }
 
+################################################################################
+# NG 05-12-08: initialization strategy changed. instead of init'ing class by class
+#              down the hierarchy, it's now done all at once.
 sub _init {
- my ( $self, $class, $args, $defaults ) = @_;
- my %synonyms = SYNONYMS($class);
- my $attributes = [
-                    AUTO_ATTRIBUTES($class),  OTHER_ATTRIBUTES($class),
-                    CLASS_ATTRIBUTES($class), keys %synonyms
- ];    # only object methods here
- $self->set_instance_defaults( $attributes, $args, $class );
- $self->set_attributes( $attributes, $args, $class );
- my $init_self = $class->can('_init_self');
- $self->$init_self( $class, $args ) if $init_self;
+  my($self,$class,$args)=@_;
+  my @attributes=ATTRIBUTES_RECURSIVE($class);
+  my $defaults=DEFAULTS_RECURSIVE($class); # Args object
+  my %fixed_attributes=FIXED_ATTRIBUTES_RECURSIVE($class);
+  my %synonyms=SYNONYMS_RECURSIVE($class);
+  my %reverse=SYNONYMS_REVERSE($class);    # reverse of SYNONYMS_RECURSIVE
+  my %cattributes=CATTRIBUTES_RECURSIVE($class);
+  my @cattributes=keys %cattributes;
+  my %iattributes=IATTRIBUTES_RECURSIVE($class);
+  my @iattributes=keys %iattributes;
+  for my $func (@cattributes) {	# class attributes
+    my $fixed_func=$fixed_attributes{$func};
+    next unless exists $args->{$fixed_func};
+#     no strict 'refs';
+#     next unless ref $self eq $class;
+    $class->$func($args->{$fixed_func});
+  }
+  # NG 08-03-21: moved default processing to separate loop before arg processing to fix bug.
+  #              Bug: if attribute early in @iattributes sets attribute that comes later, 
+  #              and later attribute has default, default clobbers value previously set!!
+  for my $fixed_func (keys %$defaults) {
+    # NG 09-04-22: skip class attributes. defaults should only be set at declare-time
+    next if $cattributes{$fixed_func};
+    
+    # because of synonyms, this is more complicated than it might appear.
+    # there are 4 cases: consider syn=>real 
+    # 1) args sets syn,  defaults sets syn
+    # 2) args sets real, defaults sets syn
+    # 3) args sets syn,  defaults sets real
+    # 4) args sets real, defaults sets real
+    next if exists $args->{$fixed_func}; # handles cases 1,4 plus case of not synonym
+    my $real=$synonyms{$fixed_func};
+    next if $real && exists $args->{$fixed_attributes{$real}}; # case 2
+    my $syn_list=$reverse{$fixed_func};
+    next if $syn_list && 
+      grep {exists $args->{$fixed_attributes{$_}}} @$syn_list; # case 3
+    # okay to set default!!
+    my $value=$defaults->{$fixed_func};
+    $value=ref $value? dclone($value): $value; # deep copy refs so each instance has own copy
+    $self->$fixed_func($value);
+  }
+
+  for my $func (@iattributes) {	# instance attributes
+    my $fixed_func=$fixed_attributes{$func};
+    if (exists $args->{$fixed_func}) {
+      $self->$func( $args->{$fixed_func} );
+#     } elsif (exists $defaults->{$fixed_func}) { 
+#       # because of synonyms, this is more complicated than it might appear.
+#       # there are 4 cases: consider syn=>real 
+#       # 1) args sets syn,  defaults sets syn
+#       # 2) args sets real, defaults sets syn
+#       # 3) args sets syn,  defaults sets real
+#       # 4) args sets real, defaults sets real
+#       next if exists $args->{$fixed_func}; # handles cases 1,4 plus case of not synonym
+#       my $real=$synonyms{$func};
+#       next if $real && exists $args->{$fixed_attributes{$real}}; # case 2
+#       my $syn_list=$reverse{$func};
+#       next if $syn_list && 
+# 	grep {exists $args->{$fixed_attributes{$_}}} @$syn_list; # case 3
+#       # okay to set default!!
+#       my $value=$defaults->{$fixed_func};
+#       $value=ref $value? dclone($value): $value; # deep copy refs so each instance has own copy
+#       $self->$func($value);
+    }
+  }
 }
+
+########################################
+
+#sub _init {
+# my ( $self, $class, $args, $defaults, $default2code ) = @_;
+# my %synonyms = SYNONYMS($class);
+# my $attributes = ATTRIBUTES($class);
+# # only object methods here
+# $self->set_instance_defaults( $args, $defaults, $default2code, $class );       # NG 05-12-07
+# $self->set_attributes( $attributes, $args, $defaults, $default2code, $class ); # NG 05-12-07
+# my $init_self = $class->can('_init_self');
+# $self->$init_self( $class, $args ) if $init_self;
+#}
 
 sub set {
  my $self = shift;
- my $args = new Class::AutoClass::Args(@_);
+ my $args = new Hash::AutoHash::Args(@_);
  while ( my ( $key, $value ) = each %$args ) {
   my $func = $self->can($key);
   $self->$func($value) if $func;
@@ -56,7 +166,7 @@ sub set {
 
 sub get {
  my $self = shift;
- my @keys = Class::AutoClass::Args::fix_keyword(@_);
+ my @keys = fix_keyword(@_);
  my @results;
  for my $key (@keys) {
   my $func = $self->can($key);
@@ -66,75 +176,98 @@ sub get {
  wantarray ? @results : $results[0];
 }
 
-# sets passed attributes on a newly created instance
+########################################
+# NG 05-12-09: changed to always call method. previous version just stored
+#              value for class attributes.
+# note: this is user level method -- not just internal!!!
 sub set_attributes {
- my ( $self, $attributes, $args, $class ) = @_;
- $self->throw('Atrribute list must be an array ref')
-   unless ref $attributes eq 'ARRAY';
- no strict 'refs';
- my @keywords = Class::AutoClass::Args::fix_keyword(@$attributes);
- my %class_funcs;
- map { $class_funcs{$_}++ } CLASS_ATTRIBUTES($class);
- for my $func (@$attributes) {
-  my $keyword = shift @keywords;
-  if ( exists $class_funcs{$func} ) {    # class method
-   if ( exists $args->{$keyword} ) {
-    next unless ref $self eq $class;
-    ${ $class . "::$func" } = $args->{$keyword};
-   }
-  } else {                               # object method
-   $self->$func( $args->{$keyword} ) if exists $args->{$keyword};
+  my ( $self, $attributes, $args ) = @_;
+  my $class=ref $self;
+  $self->throw('Atrribute list must be an array ref') unless ref $attributes eq 'ARRAY';
+  # NG 09-03-19: fix_keywords now handled by Args tied hash
+  # my @attributes=fix_keyword(@$attributes);
+  for my $func (@$attributes) {
+    next unless exists $args->{$func} && $class->can($func);
+    $self->$func( $args->{$func} );
   }
- }
 }
 
-# sets default attributes on a newly created instance
-sub set_instance_defaults {
- my ( $self, $attributes, $args, $class ) = @_;
- my %class_funcs;
- my $class_defaults = DEFAULTS_ARGS($class);
- map { $class_funcs{$_}++ } CLASS_ATTRIBUTES($class);
- while ( my ( $key, $value ) = each %$class_defaults ) {
-  next if exists $class_funcs{$key};
-  $self->{$key} = $value;
- }
-}
+ ## NG 05-12-07: process defaults.  $defaults contains defaults seen so far in the
+# #  recursive initialization process that are NOT in $args. As we descend, also
+# #  have to check synonyms: 
+# @keywords=$class->ATTRIBUTES_RECURSIVE;
+# for my $func (@keywords) {
+#   next unless exists $defaults->{$func};
+#   my $code=$class->can($func);
+#   next if $default2code->{$func} == $code;
+#   $self->$func($defaults->{$func});
+#   $default2code->{$func}=$code;
+# }
+## for my $func (keys %$defaults) {
+##   next if !$class->can($func);
+##   $self->$func($defaults->{$func});
+##   delete $defaults->{$func};
+## }
+#}
 
+## sets default attributes on a newly created instance
+## NG 05-12-07: changed to accumulate defaults in $defaults.  setting done in set_attributes.
+##              previous version set values directly into object HASH.  this is wrong, since 
+##              it skips the important step of running the attribute's 'set' method.
+#sub set_instance_defaults {
+# my ( $self, $args, $defaults, $default2code, $class ) = @_;
+# my %class_funcs;
+# my $class_defaults = DEFAULTS($class);
+# map { $class_funcs{$_}++ } CLASS_ATTRIBUTES($class);
+# while ( my ( $key, $value ) = each %$class_defaults ) {
+#   next if exists $class_funcs{$key} || exists $args->{$key};
+#   $defaults->{$key} = ref $value? dclone($value): $value; # deep copy refs;
+#   delete $default2code->{$key};	# NG 05-12-07: so new default will be set
+# }
+#}
+
+########################################
+# NG 05-12-09: rewrote to use CATTRIBUTES_RECURSIVE. also changed to always call 
+#              method. previous version just stored values
 # sets class defaults at "declare time"
 sub set_class_defaults {
- my ( $class, $attributes, $args ) = @_;
- no strict 'refs';
- my $class_defaults = DEFAULTS_ARGS($class);
- my %class_funcs;
- map { $class_funcs{$_}++ } CLASS_ATTRIBUTES($class);
- while ( my ( $func, $value ) = each %$class_defaults ) {
-  if ( exists $class_funcs{$func} ) {    # class method
-   if ( defined $value ) {
-    ${ $class . "::$func" } = $value
-      unless ${ $class . "::$func" };    # unless already set
-   }
-  }
+ my ( $class ) = @_;
+ my $defaults = DEFAULTS_RECURSIVE($class); # Args object
+ my %fixed_attributes=FIXED_ATTRIBUTES_RECURSIVE($class);
+ my %cattributes=CATTRIBUTES_RECURSIVE($class);
+ my @cattributes=keys %cattributes;
+ for my $func (@cattributes) {	# class attributes
+   my $fixed_func=$fixed_attributes{$func};
+   next unless exists $defaults->{$fixed_func};
+   my $value=$defaults->{$fixed_func};
+   # NG 06-02-03. vcassen observed that dclone not needed here since there
+   #               can only be one copy of each class attribute
+#   $value=ref $value? dclone($value): $value; # deep copy refs so each instance has own copy
+   $class->$func($value);
  }
 }
-sub class { ref $_[0]; }
+########################################
+# NG 09-11-12: removed this sub, since it pollutes namespace unreasonably 
+#               also changed all uses, of course. here and in AutoDB
+# sub class { ref $_[0]; }
 
 sub ISA {
  my ($class) = @_;
- $class = $class->class if ref $class;    # get class if called as object method
+ $class = (ref $class) || $class;    # get class if called as object method
  no strict 'refs';
  @{ $class . '::ISA' };
 }
 
 sub AUTO_ATTRIBUTES {
  my ($class) = @_;
- $class = $class->class if ref $class;    # get class if called as object method
+ $class = (ref $class) || $class;    # get class if called as object method
  no strict 'refs';
  @{ $class . '::AUTO_ATTRIBUTES' };
 }
 
 sub OTHER_ATTRIBUTES {
  my ($class) = @_;
- $class = $class->class if ref $class;    # get class if called as object method
+ $class = (ref $class) || $class;    # get class if called as object method
  no strict 'refs';
  @{ $class . '::OTHER_ATTRIBUTES' };
 }
@@ -148,141 +281,464 @@ sub CLASS_ATTRIBUTES {
 
 sub SYNONYMS {
  my ($class) = @_;
- $class = $class->class if ref $class;    # get class if called as object method
+ $class = (ref $class) || $class;    # get class if called as object method
  no strict 'refs';
  %{ $class . '::SYNONYMS' };
 }
-
-sub DEFAULTS {
- my ($class) = @_;
- $class = $class->class if ref $class;    # get class if called as object method
- no strict 'refs';
- %{ $class . '::DEFAULTS' };
-}
-
-sub DEFAULTS_ARGS {
+sub SYNONYMS_RECURSIVE {
  my $class = shift @_;
- $class = $class->class if ref $class;    # get class if called as object method
+ $class = (ref $class) || $class;    # get class if called as object method
  no strict 'refs';
- @_
-   ? ${ $class . '::DEFAULTS_ARGS' } = $_[0]
-   : ${ $class . '::DEFAULTS_ARGS' };
+ my %synonyms;
+ if (@_) {
+   %synonyms=%{ $class . '::SYNONYMS_RECURSIVE' } = @_;
+   my %reverse;
+   while(my($syn,$real)=each %synonyms) {
+     my $list=$reverse{$real} || ($reverse{$real}=[]);
+     push(@$list,$syn);
+   }
+   SYNONYMS_REVERSE($class, %reverse);
+ } else {
+   %synonyms=%{ $class . '::SYNONYMS_RECURSIVE' };
+ }
+ wantarray? %synonyms: \%synonyms;
 }
+sub SYNONYMS_REVERSE {		# reverse of SYNONYMS_RECURSIVE. used to set instance defaults
+ my $class = shift @_;
+ $class = (ref $class) || $class;    # get class if called as object method
+ no strict 'refs';
+ my %synonyms=@_ ? %{ $class . '::SYNONYMS_REVERSE' } = @_: 
+   %{ $class . '::SYNONYMS_REVERSE' };
+ wantarray? %synonyms: \%synonyms;
+}
+# ATTRIBUTES -- all attributes
+sub ATTRIBUTES {
+ my $class = shift @_;
+ $class = (ref $class) || $class;    # get class if called as object method
+ no strict 'refs';
+ my @attributes=@_ ? @{ $class . '::ATTRIBUTES' } = @_ : @{ $class . '::ATTRIBUTES' };
+ wantarray? @attributes: \@attributes;
+}
+sub ATTRIBUTES_RECURSIVE {
+ my $class = shift @_;
+ $class = (ref $class) || $class;    # get class if called as object method
+ no strict 'refs';
+ sub _uniq {my %h; @h{@_}=@_; values %h;}
+ my @attributes=@_ ? @{ $class . '::ATTRIBUTES_RECURSIVE' } = _uniq(@_): 
+   @{ $class . '::ATTRIBUTES_RECURSIVE' };
+ wantarray? @attributes: \@attributes;
+}
+# maps attributes to fixed (ie, de-cased) attributes. use when initializing attributes
+# to args or defaults
+sub FIXED_ATTRIBUTES_RECURSIVE {
+ my $class = shift @_;
+ $class = (ref $class) || $class;    # get class if called as object method
+ no strict 'refs';
+ my %attributes=@_ ? %{ $class . '::FIXED_ATTRIBUTES_RECURSIVE' } = @_:
+   %{ $class . '::FIXED_ATTRIBUTES_RECURSIVE' };
+ wantarray? %attributes: \%attributes;
+}
+# IATTRIBUTES -- instance attributes -- hash
+sub IATTRIBUTES {
+ my $class = shift @_;
+ $class = (ref $class) || $class;    # get class if called as object method
+ no strict 'refs';
+ my %attributes=@_ ? %{ $class . '::IATTRIBUTES' } = @_ : %{ $class . '::IATTRIBUTES' };
+ wantarray? %attributes: \%attributes;
+}
+sub IATTRIBUTES_RECURSIVE {
+ my $class = shift @_;
+ $class = (ref $class) || $class;    # get class if called as object method
+ no strict 'refs';
+ my %attributes=@_ ? %{ $class . '::IATTRIBUTES_RECURSIVE' } = @_:
+   %{ $class . '::IATTRIBUTES_RECURSIVE' };
+ wantarray? %attributes: \%attributes;
+}
+# CATTRIBUTES -- class attributes -- hash
 
+# NG 05-12-08: commented out. DEFAULTS_ARGS renamed to DEFAULTS
+#sub DEFAULTS {
+# my ($class) = @_;
+# $class = (ref $class) || $class;    # get class if called as object method
+# no strict 'refs';
+# %{ $class . '::DEFAULTS' };
+#}
+sub CATTRIBUTES {
+ my $class = shift @_;
+ $class = (ref $class) || $class;    # get class if called as object method
+ no strict 'refs';
+ my %attributes=@_ ? %{ $class . '::CATTRIBUTES' } = @_ : %{ $class . '::CATTRIBUTES' };
+ wantarray? %attributes: \%attributes;
+}
+sub CATTRIBUTES_RECURSIVE {
+ my $class = shift @_;
+ $class = (ref $class) || $class;    # get class if called as object method
+ no strict 'refs';
+ my %attributes=@_ ? %{ $class . '::CATTRIBUTES_RECURSIVE' } = @_:
+   %{ $class . '::CATTRIBUTES_RECURSIVE' };
+ wantarray? %attributes: \%attributes;
+}
+# NG 05-12-08: DEFAULTS_ARGS renamed to DEFAULTS.  
+#              incorporates logic to convert %DEFAULTS to Args object
+sub DEFAULTS {
+ my $class = shift @_;
+ $class = (ref $class) || $class;    # get class if called as object method
+ no strict 'refs';
+ ${ $class . '::DEFAULTS_ARGS' } or
+  ${ $class . '::DEFAULTS_ARGS' } = new Hash::AutoHash::Args(%{ $class . '::DEFAULTS' }); # convert DEFAULTS hash into AutoArgs
+}
+sub DEFAULTS_RECURSIVE {
+ my $class = shift @_;
+ $class = (ref $class) || $class;    # get class if called as object method
+ no strict 'refs';
+ my $defaults=@_ ? ${ $class . '::DEFAULTS_RECURSIVE' } = $_[0]: 
+   ${ $class . '::DEFAULTS_RECURSIVE' };
+wantarray? %$defaults: $defaults;
+}
+# NG 06-03-14: Used to save $case from compile-time declare for use by run-time declare
+sub CASE {
+ my $class = shift @_;
+ $class = (ref $class) || $class;    # get class if called as object method
+ no strict 'refs';
+ my $case=@_ ? $ { $class . '::CASE' } = $_[0] : $ { $class . '::CASE' };
+ $case;
+}
 sub AUTODB {
  my ($class) = @_;
- $class = $class->class if ref $class;    # get class if called as object method
+ $class = (ref $class) || $class;    # get class if called as object method
  no strict 'refs';
  %{ $class . '::AUTODB' };
 }
 
 sub ANCESTORS {
  my $class = shift @_;
- $class = $class->class if ref $class;    # get class if called as object method
+ $class = (ref $class) || $class;    # get class if called as object method
  no strict 'refs';
  @_ ? ${ $class . '::ANCESTORS' } = $_[0] : ${ $class . '::ANCESTORS' };
 }
 
 sub CAN_NEW {
  my $class = shift @_;
- $class = $class->class if ref $class;    # get class if called as object method
+ $class = (ref $class) || $class;    # get class if called as object method
  no strict 'refs';
  @_ ? ${ $class . '::CAN_NEW' } = $_[0] : ${ $class . '::CAN_NEW' };
 }
 
 sub FORCE_NEW {
- my $class = shift @_;
- $class = $class->class if ref $class;    # get class if called as object method
- no strict 'refs';
- ${ $class . '::FORCE_NEW' };
-}
-
-sub declare {
- my ( $class, $case ) = @_;
- my @CLASS_ATTS = CLASS_ATTRIBUTES($class);
- my %class_funcs;
- map { $class_funcs{$_}++ } @CLASS_ATTS;
- my $attributes = [ AUTO_ATTRIBUTES($class), @CLASS_ATTS ];
- my $synonyms   = { SYNONYMS($class) };
- my %autodb     = AUTODB($class);
- my $args;
-
- # enumerate internal super-classes and find an external class to create object
- if (%autodb) {    # hack ISA before setting ancestors
+  my $class = shift @_;
+  $class = (ref $class) || $class;    # get class if called as object method
   no strict 'refs';
+  ${ $class . '::FORCE_NEW' };
+}
+sub DECLARED {			# set to 1 by declare. tested in new
+  my $class = shift @_;
+  $class = (ref $class) || $class;    # get class if called as object method
+  no strict 'refs';
+  @_ ? ${ $class . '::DECLARED' } = $_[0] : ${ $class . '::DECLARED' };
+}
+sub AUTOCLASS_DEFERRED_DECLARE {
+  my $class = shift @_;
+  $class = (ref $class) || $class;    # get class if called as object method
+  no strict 'refs';
+  ${ $class . '::AUTOCLASS_DEFERRED_DECLARE' }{$_[0]}=$_[0] if @_;
+#  push(@{ $class . '::AUTOCLASS_DEFERRED_DECLARE' }, @_) if @_;
+#  @{ $class . '::AUTOCLASS_DEFERRED_DECLARE' };
+  keys %{ $class . '::AUTOCLASS_DEFERRED_DECLARE' };
+}
+sub declare {
+ my ( $class, $case, $is_runtime ) = @_;
+ $class or $class=caller;	# NG 09-11-02: make $class optional
 
+ # NG 06-03-18: improved code to recognize that user can set $CASE in module
+ #              this is first step toward deprecating this parameter
+ if (defined $case) {
+    CASE($class,$case);		# save $case for run-time
+  } else {
+    $case=CASE($class);		# else, set $case from $CASE
+  }
+ ########################################
+ # NG 05-12-08,09: added code to compute RECURSIVE values, IATTRIBUTES, CATTRIBUTES
+ my @attributes_recursive;
+ my %iattributes_recursive;
+ my %cattributes_recursive;
+ my %synonyms_recursive;
+ my $defaults_recursive;
+ # get info from superclasses.  recursively, this includes all ancestors
+ # NG 06-03-14: split loop to get all supers that are AutoClasses
+ #              and make sure they are declared. If any not declared,
+ #              have to defer this declaration to run-time
+ my $defer;
+ for my $super (ISA($class)) {
+   next if $super eq 'Class::AutoClass';
+   ####################
+   # NG 05-12-09: added check for super classes not yet used
+   # Caution: this all works fine if people follow the Perl convention of
+   #  placing module Foo in file Foo.pm.  Else, there's no easy way to
+   #  translate a classname into a string that can be 'used'
+   # The test 'unless %{$class.'::'}' cause the 'use' to be skipped if
+   #  the class is already loaded.  This should reduce the opportunities
+   #  for messing up the class-to-file translation.
+   # Note that %{$super.'::'} is the symbol table for the class
+   
+   # NG 09-01-14: fixed dumb ass bug: the eval "use..." below is, of course, not run 
+   #   if the class is already loaded.  This means that the value of $@ is not reset
+   #   by the eval.  So, if it had a true value before the eval, it will have the 
+   #   same value afterwards causing the error code to be run!
+   #   FIX: changed "use" to "require" (which returns true on success) and use the
+   #   return value to control whether error code run
+   { no strict 'refs';
+     unless (%{$super.'::'}) {
+       eval "require $super" or
+	 confess "'use $super' failed while declaring class $class. Note that class $super is listed in \@ISA for class $class, but is not explicitly used in the code.  We suggest, as a matter of coding style, that classes listed in \@ISA be explicitly used";
+     }}
+#   next unless UNIVERSAL::isa($super,'Class::AutoClass');
+   # NG 06-03-14: handle different cases of $super being declared
+   #              at runtime, okay to declare $super now since entire module
+   #              has been parsed.
+   #              at compile time, there is no guarantee that AutoClass variables 
+   #              have yet been parsed. so, we defer declaration of current class 
+   #              until $super is declared. CAUTION: this writes into $super's 
+   #              namespace which is rude if $super is not an AutoClass class !!!
+   if (!DECLARED($super)) {
+     if ($is_runtime) {
+       if (UNIVERSAL::isa($super,'Class::AutoClass')) {
+	 declare($super,CASE($class),$is_runtime);
+       } else {			# not AutoClass class, so just call it declared
+	 DECLARED($class,1);
+       }
+     } else {
+       AUTOCLASS_DEFERRED_DECLARE($super,$class); # push class onto super's deferred list
+       $defer=1;		# causes return before loop that does the work 
+     }
+   }
+ }
+ # NG 06-03-14: AutoDB registration must be done at compile-time. if this code get
+ #              moved later, remember that hacking of @ISA has to happen before class
+ #              hierarchy enumerated
+ my %autodb     = AUTODB($class);
+ if (%autodb) { 
+  no strict 'refs';
   # add AutoDB::Object to @ISA if necessary
   unless ( grep /^Class::AutoDB::Object/, @{ $class . '::ISA' } ) {
-   unshift @{ $class . '::ISA' }, 'Class::AutoDB::Object';
+    unshift @{ $class . '::ISA' }, 'Class::AutoDB::Object';
   }
   require 'Class/AutoDB/Object.pm';
   require 'Class/AutoDB.pm';    # AutoDB.pm is needed for calling auto_register
  }
+ # NG 05-12-02: auto-register subclasses which do not set %AUTODB
+ # if (%autodb) {               # register after setting ANCESTORS
+ if (UNIVERSAL::isa($class,'Class::AutoDB::Object')) {
+   require 'Class/AutoDB.pm';    # AutoDB.pm is needed for calling auto_register
+   my $args = Hash::AutoHash::Args->new( %autodb, -class => $class ); # TODO - spec says %AUTODB=(1) should work
+  Class::AutoDB::auto_register($args);
+ }
+ 
+ return if $defer;
+ # NG 06-03-14: this part of the loop does the work
+ for my $super (ISA($class)) {
+   next if $super eq 'Class::AutoClass' || !UNIVERSAL::isa($super,'Class::AutoClass');
+   push(@attributes_recursive,ATTRIBUTES_RECURSIVE($super));
+   my %h;
+   %h=IATTRIBUTES_RECURSIVE($super);
+   @iattributes_recursive{keys %h}=values %h;
+   undef %h;
+   %h=CATTRIBUTES_RECURSIVE($super);
+   @cattributes_recursive{keys %h}=values %h;
+   undef %h;
+   %h=SYNONYMS_RECURSIVE($super);
+   @synonyms_recursive{keys %h}=values %h;
+   my $d=DEFAULTS_RECURSIVE($super);
+   @$defaults_recursive{keys %$d}=values %$d;
+ }
+
+ # add info from self. do this after parents so our defaults, synonyms override parents
+ # for IATTRIBUTES, don't add in any that are already defined, since this just creates 
+ #  redundant methods
+ my %synonyms   = SYNONYMS($class);
+ my %iattributes;
+ my %cattributes;
+ # init cattributes to declared CLASS_ATTRIBUTES
+ map {$cattributes{$_}=$class} CLASS_ATTRIBUTES($class);
+ # iattributes = all attributes that are not cattributes
+ map {$iattributes{$_}=$class unless $iattributes_recursive{$_} || $cattributes{$_}}
+   (AUTO_ATTRIBUTES($class),OTHER_ATTRIBUTES($class));
+ # add in synonyms
+ while(my($syn,$real)=each %synonyms) {
+   confess "Inconsistent declaration for attribute $syn: both synonym and real attribute"
+     if $cattributes{$syn} && $iattributes{$syn};
+   $cattributes{$syn}=$class if $cattributes{$real} || $cattributes_recursive{$real};
+   $iattributes{$syn}=$class if $iattributes{$real} || $iattributes_recursive{$real};
+ }
+ IATTRIBUTES($class,%iattributes);
+ CATTRIBUTES($class,%cattributes);
+ ATTRIBUTES($class,keys %iattributes,keys %cattributes);
+
+ # store our attributes into recursives
+ @iattributes_recursive{keys %iattributes}=values %iattributes;
+ @cattributes_recursive{keys %cattributes}=values %cattributes;
+ push(@attributes_recursive,keys %iattributes,keys %cattributes);
+ # are all these declarations consistent?
+ if (my @inconsistents=grep {exists $cattributes_recursive{$_}} keys %iattributes_recursive) {
+   # inconsistent class vs. instance declarations
+   my @errstr=("Inconsistent declarations for attribute(s) @inconsistents");
+   map {
+     push(@errstr,
+	  "\tAttribute $_: declared instance attribute in $iattributes_recursive{$_}, class attribute in $cattributes_recursive{$_}");
+   } @inconsistents;
+   confess join("\n",@errstr);
+ }
+ # store our synonyms into recursive
+ @synonyms_recursive{keys %synonyms}=values %synonyms;
+ # store our defaults into recursive
+
+ my $d=DEFAULTS($class);
+ @$defaults_recursive{keys %$d}=values %$d;
+ # store computed values into class
+ ATTRIBUTES_RECURSIVE($class,@attributes_recursive);
+ IATTRIBUTES_RECURSIVE($class,%iattributes_recursive);
+ CATTRIBUTES_RECURSIVE($class,%cattributes_recursive);
+ SYNONYMS_RECURSIVE($class,%synonyms_recursive);
+ DEFAULTS_RECURSIVE($class,$defaults_recursive);
+
+ # note that attributes are case sensitive, while defaults and args are not.
+ # (this may be a crock, but it's documented this way). to deal with this, we build
+ # a map from de-cased attributes to attributes. really, the map takes use from
+ # id's as fixed by Args to attributes as they exist here
+ my %fixed_attributes;
+ my @fixed_attributes=fix_keywords(@attributes_recursive);
+ @fixed_attributes{@attributes_recursive}=@fixed_attributes;
+ FIXED_ATTRIBUTES_RECURSIVE($class,%fixed_attributes);
+
+ ########################################
+
+ # enumerate internal super-classes and find an external class to create object
+
+# NG 06-03-14: moved code for AutoDB registration higher.
+# my %autodb     = AUTODB($class);
+# if (%autodb) {    # hack ISA before setting ancestors
+#  no strict 'refs';
+
+#  # add AutoDB::Object to @ISA if necessary
+#  unless ( grep /^Class::AutoDB::Object/, @{ $class . '::ISA' } ) {
+#   unshift @{ $class . '::ISA' }, 'Class::AutoDB::Object';
+#  }
+#  require 'Class/AutoDB/Object.pm';
+#  require 'Class/AutoDB.pm';    # AutoDB.pm is needed for calling auto_register
+# }
+
  my ( $ancestors, $can_new ) = _enumerate($class);
  ANCESTORS( $class, $ancestors );
  CAN_NEW( $class, $can_new );
- DEFAULTS_ARGS( $class, new Class::AutoClass::Args( DEFAULTS($class) ) );
 
- # convert DEFAULTS hash into AutoArgs
- if (%autodb) {                 # register after setting ANCESTORS
-  my $args = Class::AutoClass::Args->new( %autodb, -class => $class ); # TODO - spec says %AUTODB=(1) should work
-  Class::AutoDB::auto_register($args);
- }
- for my $func (@$attributes) {
-  my $fixed_func = Class::AutoClass::Args::fix_keyword($func);
-  my ( $sub, %keys );
-  if ( $args and $args->{keys} ) {
-   %keys = map { split } split /,/, $args->{keys};
-  }
-  if ( $keys{$func} ) {         # AutoDB dispatch
-   $sub = '*' . $class . '::' . $func . "=sub{\@_>1?
-        \$_[0] . '::AUTOLOAD'->{\'$fixed_func\'}=\$_[1]: 
-        \$_[0] . '::AUTOLOAD'->{\'$fixed_func\'};}";
-  } else {
-   if ( exists $class_funcs{$func} ) {
-    $sub = '*' . $class . '::' . $func . "=sub{\@_>1?
-              \${$class\:\:$fixed_func\}=\$_[1]: 
-              \${$class\:\:$fixed_func\};}";
-   } else {
-    $sub = '*' . $class . '::' . $func . "=sub{\@_>1?
-             \$_[0]->{\'$fixed_func\'}=\$_[1]: 
+# DEFAULTS_ARGS( $class, new Hash::AutoHash::Args( DEFAULTS($class) ) ); # convert DEFAULTS hash into AutoArgs. NG 05-12-08: commented out since logic moved to DEFAULTS sub
+
+# # NG 05-12-02: auto-register subclasses which do not set %AUTODB
+# # if (%autodb) {               # register after setting ANCESTORS
+# if (UNIVERSAL::isa($class,'Class::AutoDB::Object')) { # register after setting ANCESTORS
+#   require 'Class/AutoDB.pm';    # AutoDB.pm is needed for calling auto_register
+#   my $args = Hash::AutoHash::Args->new( %autodb, -class => $class ); # TODO - spec says %AUTODB=(1) should work
+#  Class::AutoDB::auto_register($args);
+# }
+
+ ########################################
+ # NG 05-12-09: changed loops to iterate separately over instance and class attributes.
+ #              commented out code for AutoDB dispatch -- could never have run anyway
+ #              since %keys never set.  also not longer compatible with new
+ #              Registration format.
+ # generate the methods
+ 
+ my @auto_attributes=AUTO_ATTRIBUTES($class);
+ undef %iattributes;
+ %iattributes=IATTRIBUTES($class);
+ my @iattributes=grep {$iattributes{$_} && !exists $synonyms{$_}} @auto_attributes;
+ my @class_attributes=(@auto_attributes,CLASS_ATTRIBUTES($class));
+ my @cattributes=grep {$cattributes{$_} && !exists $synonyms{$_}} @class_attributes;
+
+ for my $func (@iattributes) {
+  my $fixed_func = fix_keyword($func);
+  my $sub = '*' . $class . '::' . $func . "=sub{\@_>1?
+             \$_[0]->{\'$fixed_func\'}=\$_[1]:
              \$_[0]->{\'$fixed_func\'};}";
-   }
-  }
   eval $sub;
- }
- while ( my ( $func, $old_func ) = each %$synonyms ) {
-  next
-    if $func eq
-    $old_func;    # avoid infinite recursion if old and new are the same
+  }
+ for my $func (@cattributes) {
+  my $fixed_func = fix_keyword($func);
+  my $sub = '*' . $class . '::' . $func . "=sub{\@_>1?
+             \${$class\:\:$fixed_func\}=\$_[1]: 
+             \${$class\:\:$fixed_func\};}";
+  eval $sub;
+  }
+# NG 05-12-08: commented out.  $args was never set anyway...  This renders moot the
+#              'then' clause of the 'if' below.  I left it in just in case I have to
+#              revert the change :)
+# TODO: eliminate 'then' clause if not needed
+#  if ( $args and $args->{keys} ) {
+#   %keys = map { split } split /,/, $args->{keys};
+#  }
+#  if ( $keys{$func} ) {         # AutoDB dispatch
+#   $sub = '*' . $class . '::' . $func . "=sub{\@_>1?
+#        \$_[0] . '::AUTOLOAD'->{\'$fixed_func\'}=\$_[1]: 
+#        \$_[0] . '::AUTOLOAD'->{\'$fixed_func\'};}";
+#  } else {
+#   if ( exists $cattributes{$func} ) {
+#    $sub = '*' . $class . '::' . $func . "=sub{\@_>1?
+#              \${$class\:\:$fixed_func\}=\$_[1]: 
+#              \${$class\:\:$fixed_func\};}";
+#   } else {
+#    $sub = '*' . $class . '::' . $func . "=sub{\@_>1?
+#             \$_[0]->{\'$fixed_func\'}=\$_[1]:
+#             \$_[0]->{\'$fixed_func\'};}";
+#   }
+#  }
+#  eval $sub;
+# }
+ while ( my ( $func, $old_func ) = each %synonyms ) {
+  next if $func eq $old_func;	# avoid redundant def if old same as new
+#  my $class_defined=$iattributes_recursive{$old_func} || $cattributes_recursive{$old_func};
+#  my $sub=
+#    '*' . $class . '::' . $func . '=\& ' . $class_defined . '::' . $old_func;
   my $sub =
     '*' . $class . '::' . $func . "=sub {\$_[0]->$old_func(\@_[1..\$\#_])}";
   eval $sub;
  }
  if ( defined $case && $case =~ /lower|lc/i )
  {                # create lowercase versions of each method, too
-  for my $func (@$attributes) {
+  for my $func (@iattributes,@cattributes) {
    my $lc_func = lc $func;
    next
-     if $lc_func eq $func;  # avoid infinite recursion if func already lowercase
-   my $sub =
-     '*' . $class . '::' . $lc_func . "=sub {\$_[0]->$func(\@_[1..\$\#_])}";
+     if $lc_func eq $func;  # avoid redundant def if func already lowercase
+  my $sub=
+    '*' . $class . '::' . $lc_func . '=\& '. $class . '::' . $func;
+#   my $sub =
+#     '*' . $class . '::' . $lc_func . "=sub {\$_[0]->$func(\@_[1..\$\#_])}";
    eval $sub;
   }
  }
  if ( defined $case && $case =~ /upper|uc/i )
  {                          # create uppercase versions of each method, too
-  for my $func (@$attributes) {
+  for my $func (@iattributes,@cattributes) {
    my $uc_func = uc $func;
    next
-     if $uc_func eq $func;  # avoid infinite recursion if func already uppercase
-   my $sub =
-     '*' . $class . '::' . $uc_func . "=sub {\$_[0]->$func(\@_[1..\$\#_])}";
+     if $uc_func eq $func;  # avoid redundant def if func already uppercase
+  my $sub=
+    '*' . $class . '::' . $uc_func . '=\& '. $class . '::' . $func;
+#   my $sub =
+#     '*' . $class . '::' . $uc_func . "=sub {\$_[0]->$func(\@_[1..\$\#_])}";
    eval $sub;
   }
  }
- # TODO - better way to deal with this
- eval {$class->set_class_defaults( $attributes, $args )}; # fails if class doesn't inherit from AutoClass
+ # NG 05-12-08: removed $args from parameter list
+ # NG 05-12-09: converted call from method ($class->...) to function. removed eval that 
+ #              wrappped call. provided regression test for class that does not inherit 
+ #              from AutoClass
+ set_class_defaults($class);
+ DECLARED($class,1);		# NG 06-02-03: so 'new' can know when to call declare
+
+ # NG 06-03-14: Process deferred subclasses
+ my @deferreds=AUTOCLASS_DEFERRED_DECLARE($class);
+ for my $subclass (@deferreds) {
+   declare($subclass,CASE($subclass),$is_runtime) unless DECLARED($subclass);
+ }
 }
 
 sub _enumerate {
@@ -327,305 +783,285 @@ sub _is_positional {
  @_ % 2 || $_[0] !~ /^-/;
 }
 1;
+
+
+
 __END__
 
-# Pod documentation
+=head1 NAME
 
-    =head1 NAME
+Class::AutoClass - Create get and set methods and simplify object initialization
 
-Class::AutoClass - Automatically define simple get and set methods and
-    automatically initialize objects in a (possibly mulitple) inheritance
-    structure
+=head1 VERSION
 
-    =head1 SYNOPSIS
+Version 1.49_01
 
-    package SubClass;
-use Class::AutoClass;
-use SomeOtherClass;
-@ISA=qw(AutoClass SomeOtherClass);
+=head1 SYNOPSIS
 
-@AUTO_ATTRIBUTES=qw(name sex address dob);
-@OTHER_ATTRIBUTES=qw(age);
-%SYNONYMS=(gender=>'sex');
-%DEFAULTS=(name=>'unknown');
-$CASE='upper';
-Class::AutoClass::declare(__PACKAGE__);
+  # code that defines class
+  #
+  package Person;
+  use base qw(Class::AutoClass);
+  use vars qw(@AUTO_ATTRIBUTES @OTHER_ATTRIBUTES @CLASS_ATTRIBUTES 
+              %SYNONYMS %DEFAULTS);
+  @AUTO_ATTRIBUTES=qw(first_name last_name sex friends);
+  @OTHER_ATTRIBUTES=qw(full_name);
+  @CLASS_ATTRIBUTES=qw(count);
+  %DEFAULTS=(friends=>[]);
+  %SYNONYMS=(gender=>'sex',name=>'full_name');
+  Class::AutoClass::declare;
 
-sub age {print "Calculate age from dob. NOT YET IMPLEMENTED\n"; undef}
+  # method to perform non-standard initialization, if any
+  sub _init_self {
+    my ($self,$class,$args) = @_;
+    return unless $class eq __PACKAGE__;
+    # any non-standard initialization goes here
+    $self->count($self->count + 1); # increment number of objects created
+  }
 
-sub _init_self {
-    my($self,$class,$args)=@_;
-    return unless $class eq __PACKAGE__; # to prevent subclasses from re-running this
-    print __PACKAGE__.'::_init_self: ',"$class\n";
-}
+  # implementation of non-automatic attribute 'full_name' 
+  # computed from first_name and last_name
+  sub full_name {
+    my $self=shift;
+    if (@_) {			    # to set full_name, have to set first & last 
+      my $full_name=shift;
+      my($first_name,$last_name)=split(/\s+/,$full_name);
+      $self->first_name($first_name);
+      $self->last_name($last_name);
+    }
+    return join(' ',$self->first_name,$self->last_name);
+  }
+  ########################################
+
+  # code that uses class
+  #
+  use Person;
+  my $john=new Person(name=>'John Smith',sex=>'M');
+  my $first_name=$john->first_name; # 'John'
+  my $gender=$john->gender;         # 'M'
+  my $friends=$john->friends;       # []
+  $john->last_name('Doe');          # set last_name
+  my $name=$john->name;             # 'John Doe'
+  my $count=$john->count;           # 1
+
 
 =head1 DESCRIPTION
 
-    1) get and set methods for simple attributes can be automatically
-    generated
-
-    2) argument lists are handled as described below
-
-    3) the protocol for object creation and initialization is close to
-    the 'textbook' approach generally suggested for object-oriented Perl
-    (see below)
-
-    4) object initialization is handled correctly in the presence of multiple inheritance
-
-    @AUTO_ATTRIBUTES is a list of 'attribute' names: get and set methods
-    are created for each attribute.  By default, the name of the method
-    is identical to the attribute (but see $CASE below).  Values of
-    attributes can be set via the 'new' constructor, %DEFAULTS, or the 
-    'set' method as discussed below.
-
-    @CLASS_ATTRIBUTES is a list of class attributes: get and set methods
-    are created for each attribute. By default, the name of the method
-    is identical to the attribute (but see $CASE below). Values of
-    attributes can be set via the 'new' constructor, %DEFAULTS (initialized 
-    at "declare time" (when the declare function is called) versus instance
-    attributes, which are of course initialized at runtime), standard 
-    class variable access syntax ($PackageName::AttributeName), or the 
-    'set' method as discussed below. Normal inheritance rules apply to
-    class attributes (but of course, instances of the same class share
-	the same class variable).
-
-    @OTHER_ATTRIBUTES is a list of attributes for which get and set
-    methods are NOT generated, but whose values can be set via the 'new'
-    constructor or the 'set' method as discussed below.
-
-    %SYNONYMS is a hash that defines synonyms for attribues. Each entry
-    is of the form 'new_attribute_name'=>'old_attribute_name'. get and
-    set methods are generated for the new names; these methods simply
-    call the method for the old name.
-    
-    %DEFAULTS is a hash that defines default values for attributes. Each 
-    entry is of the form 'attribute_name'=>'default_value'. get and
-    set methods are generated for each attributes.
-
-    $CASE controls whether additional methods are generated with all
-    upper or all lower case names.  It should be a string containing the
-    strings 'upper' or 'lower' (case insenstive) if the desired case is
-    desired.
-
-    The declare function actually generates the method.
-    This should be called once and no where else.
-
-    AutoClass must be the first class in @ISA !! As usual, you create
-    objects by calling 'new'. Since AutoClass is the first class in @ISA,
-    it's 'new' method is the one that's called.  AutoClass's 'new'
-examines the rest of @ISA and searches for a superclass that is
-capable of creating the object.  If no such superclass is found,
-AutoClass creates the object itself.  Once the object is created,
-AutoClass arranges to have all subclasses run their initialization
-methods (_init_self) in a top-down order.
-
-=head2 Argument Processing
-
-We support positional and keyword argument lists, but we strongly urge 
-that each method pick one form or the other, as the combination is inherently ambiguous (see below).
-
-Consider a method, foo, that takes two arguments, a first name and a
-last_name name.  The positional form might be
-
-  $object->foo('Nat', 'Goodman')
-
-while the keyword form might be
-
-  $object->foo(first_name=>'Nat', last_name=>'Goodman')
-
-In keyword form, keywords are insensitive to case and leading
-dashes: the keywords
-
-  first_name, -first_name, -FIRST_NAME, --FIRST_NAME, First_Name, -First_Name
-
-are all equivalent.  Internally, for those who care, our convention is
-to use uppercase, un-dashed keys for the attributes of an object.
-
-We convert repeated keyword arguments into an ARRAY ref of the values. Thus:
-
-  $object->foo(first_name=>'Nat', first_name=>'Nathan')
-
-is equivalent to
-
-  $object->foo(first_name=>['Nat', 'Nathan'])
-
-Keyword arguments can be specified via ARRAY or HASH
-refs which are dereferenced back to their elements, e.g.,
-
-  $object->foo([first_name=>'Nat', last_name=>'Goodman'])
-
-  $object->foo({first_name=>'Nat', last_name=>'Goodman'})
-
-are both equivalent to 
-
-  $object->foo(first_name=>'Nat', last_name=>'Goodman')
-
-We can get away with this, because we encourage method writers to
-choose between positional and keyword argument lists.  If a method
-uses positional arguments, it will interpret
-
-  $object->foo($array)
-
-as a call that is setting the first_name parameter to $array, while if
-it uses keyword arguments, it will dereference the array to a list of
-keyword, value pairs.
-
-We also allow the argument list to be an object.  This is often used
-in new to accomplish what a C++ programmer would call a cast.  In
-simple cases, the object is just treated as a HASH ref and its
-attributes are passed to a the method as keyword, value pairs.
-
-=head2 Why the Combination of Positional and Keyword Forms is Ambiguous
-
-The keyword => value notation is just a Perl shorthand for stating two
-list members with the first one quoted.  Thus,
-
-  $object->foo(first_name=>'Nat', last_name=>'Goodman')
-
-is completely equivalent to 
-
-  $object->foo('first_name', 'Nat', 'last_name', 'Goodman')
-
-The ambiguity of allowing both positional and keyword forms should now
-be apparent. In this example,
-
-  $object->foo('first_name', 'Nat')
-
-there is s no way to tell whether the program is calling foo with the
-first_name parameter set to the value 'first_name' and the last_name
-parameter set to 'Nat', vs. calling foo with the first_name parameter
-set to 'Nat' and the last_name parameter left undefined.
-
-If a program wishes to permit both forms, we suggest that keywords be 
-required to start with '-' (and that values do not start with '-').  
-Obviously, this is not fully general. We provide a method, _is_positional, 
-that checks this convention. Subclasses are free to ignore this.
-
-=head2 Protocol for Object Creation and Initializaton
-
-We expect objects to be created by invoking new on its class.  For example
-
-  $object = new SomeClass(first=>'Nat', last=>'Goodman')
-
-To correctly initialize objects that participate in multiple inheritance, 
-we use a technqiue described in Chapter 10 of Paul Fenwick's excellent 
-    tutorial on Object Oriented Perl (see http://perltraining.com.au/notes/perloo.pdf).  
-(We experimented with Damian Conway's interesting NEXT
-pseudo-pseudo-class discussed in Chapter 11 of Fenwick's tutorial
- available in CPAN at http://search.cpan.org/author/DCONWAY/NEXT-0.50/lib/NEXT.pm, 
- but could not get it to traverse the inheritance structure in the correct,
- top-down order.)
-
-    AutoClass class provides a 'new' method that expects a keyword argument
-    list.  This method processes the argument list as discussed in
-    L<Argument Processing>: it figures out the syntactic form (list of
-							       keyword, value pairs, vs. ARRAY ref vs. HASH ref, etc.).  It then
-    converts the argument list into a canonical form, which is a list of
-    keyword, value pairs with all keywords uppercased and de-dashed.  Once
-    the argument list is in this form, subsequent code treats it as a HASH
-    ref.
-
-AutoClass::new initializes the object's class structure from top to
-bottom, and is careful to initialize each class exactly once even in
-the presence of multiple inheritance.  The net effect is that objects
-are initialized top-down as expected; a subclass object can assume
-that all superior classes are initialized by the time subclass
-initialization occurs.
-
-AutoClass automatically initializes attributes and synonyms declared
-when the class is defined.  If additional initialization is required,
-the class writer can provide an _init_self method.  _init_self is
-called after all superclasses are initialized and after the automatic
-initialization for the class has been done.
-
-AutoClass initializes attributes and synonyms by calling the set methods
-for these elements with the like-named parameter -- it does not simply
-slam the parameter into a slot in the object''s HASH.  This allows the
-class writer implement non-standard initialization within the set
-method.
-
-The main case where a subclass needs its own 'new' method is if it
-wishes to allow positional arguments. In this case, the subclass 'new'
-is responsible for is responsible for recognizing that positional
-arguments are being used (if the class permits keyword arguments
-also), and converting the positional arguments into keyword, value
-form.  At this point, the method can simply call AutoClass::new with
-the converted argument list.
-
-The subclass should not generally call SUPER::new as this would force
-redundant argument processing in any super-class that also has its own
-new.  It would also force the super-class new to be smart enough to
-handle positional as well as keyword parameters, which as we've noted
-    is inherently ambiguous.
-
-    =head1 KNOWN BUGS AND CAVEATS
-
-    This is still a work in progress.  
-
-    =head2 Bugs, Caveats, and ToDos
-
-    1) There is no way to manipulate the arguments that are sent to the
-    real base class. There should be a way to specify a subroutine that
-    reformats these if needed.
-
-    2) DESTROY not handled
-
-    3) Autogeneration of methods is hand crafted.  It may be better to
-    use Class::MakeMethods or Damian Conway's Multimethod class for
-  doing signature-based method dispatch
-  
-  4) Caveat: In order to specify that a class that uses AutoClass should return
-  undef (versus an uninitialized (but blessed) object), one need to set:
-  $self->{__NULLIFY__}=1;
-
-=head1 AUTHOR - Nat Goodman
-
-Email natg@shore.net
-
-=head1 MAINTAINER - Christopher Cavnor
-
-Email ccavnor@systemsbiology.net
-
-=head1 COPYRIGHT
-
-Copyright (c) 2003 Institute for Systems Biology (ISB). All Rights Reserved.
-
-This module is free software; you can redistribute it and/or modify
-it under the same terms as Perl itself.
-
-=head1 APPENDIX
-
-The rest of the documentation describes the methods.  Note that
-internal methods are preceded with _
+This is yet another module that generates standard 'get' and 'set'
+methods for Perl classes.  It also handles initialization of object
+and class data from parameter lists or defaults, and arranges for
+object creation and initialization to occur in top-down, textbook
+order even in the presence of multiple inheritance.
+
+CAUTION: This module is old. We use it internally, and while it works
+well for our purposes, we urge new users to heed the warnings in
+L<"BUGS"> and to look at other modules listed in L<SEE ALSO>.  This
+release brings the CPAN version of the module up-to-date relative to
+our internal version, something we should have done long ago.  We do
+not expect further releases of this code base, except for bug fixes.
+Future development, if any, will entail a redesign building on newer
+CPAN modules.
+
+=head2 Defining the class
+
+We use the term "attribute" for object and class variables being
+managed by this module.  This was appropriate usage when we wrote the
+code several years ago, but we recognize that "attribute" now means
+something else in Perl-dom.  It's too late for us to change.  Sorry.
+
+Class::AutoClass provides a number of variables for specifying
+attributes and default values.
+
+@AUTO_ATTRIBUTES is a list of attribute names. The software generates
+'get' and 'set' methods for each attribute.  By default, the name of
+the method is identical to the attribute (but see $CASE below). Values
+of attributes can be set via the 'new' constructor, %DEFAULTS, or the
+'set' method as discussed below.
+
+@OTHER_ATTRIBUTES is a list of attributes for which 'get' and 'set'
+methods are NOT generated, but whose values can be set via the 'new'
+constructor or the 'set' method as discussed below.
+
+@CLASS_ATTRIBUTES is a list of class attributes.  The module generates
+'get' and 'set' methods for each attribute just as for
+@AUTO_ATTRIBUTES.  Values of attributes can be set via the 'new'
+constructor, %DEFAULTS (initialized when the 'declare' function is
+called), or the 'set' method as discussed below. Normal inheritance
+rules apply to class attributes (but instances of the same class share
+the same class variable).
+
+%SYNONYMS is a hash that defines synonyms for attributes. Each entry is
+of the form 'new_attribute_name'=>'old_attribute_name'. 'get' and
+'set' methods are generated for the new names; these methods simply
+call the methods for the old name.  
+
+%DEFAULTS is a hash that defines default values for attributes. Each
+entry is of the form 'attribute_name'=>'default_value'.
+
+$CASE controls whether additional methods are generated with all upper
+or all lower case names.  It should be a string containing the strings
+'upper' or 'lower' (case insensitive) if the desired case is
+desired. [BUG: This is hopelessly broken and ill-conceived. Most of
+the code assumes that attributes are lower case. Even when upper or
+mixed case methods are present, the attribute setting code ignores
+them.]
+
+The 'declare' function actually generates the methods. This should be
+called once in the main code of the class after the variables
+described above are set.
+
+Class::AutoClass must be the first class in @ISA or 'use base'!! As
+usual, you create objects by calling 'new'. Since Class::AutoClass is
+the first class in @ISA, its 'new' method is the one that's called.
+Class::AutoClass's 'new' examines the rest of @ISA looking for a
+superclass capable of creating the object.  If no such superclass is
+found, Class::AutoClass creates the object itself.  Once the object is
+created, Class::AutoClass arranges to have all subclasses run their
+initialization methods (_init_self) in a top-down order.
+
+=head2 Object creation and initialization
+
+We expect objects to be created by invoking 'new' on its class.  For
+example
+
+  $john=new Person(first_name=>'John',last_name=>'Smith')
+
+To correctly initialize objects that participate in multiple
+inheritance, we use a technique described in Chapter 10 of Paul
+Fenwick's tutorial on Object Oriented Perl
+L<http://perltraining.com.au/notes/perloo.pdf>.  (We experimented with
+Damian Conway's L<NEXT> pseudo-pseudo-class but could not get it to
+traverse the inheritance structure in the desired top-down order; this
+ may be fixed in recent versions. See L<SEE ALSO> for other
+modules addressing this issue.)
+
+Class::AutoClass provides a 'new' method that expects a keyword
+argument list.  It converts the argument list into a
+L<Hash::AutoHash::Args> object, which normalizes the keywords to
+ignore case and leading dashes. 'new' then initializes all attributes
+using the arguments and default values in %DEFAULTS.  This works for
+synonyms, too, of course.
+
+CAUTION: If you supply a default value for both a synonym and its
+target, the one that sticks is arbitrary.  Likewise if you supply an
+initial value for both a synonym and its target, the one that sticks
+is arbitrary.
+
+Initialization of attributes is done for all classes in the object's
+class structure at the same time. If a given attribute is defined
+multiple times, the most specific definition wins.  This is only an
+issue if the attribute is defined differently in different classes,
+eg, as an 'auto' attribute in one class and an 'other' attribute,
+class atribute, or synonym in another.
+
+Class::AutoClass::new initializes attributes by calling the 'set'
+methods for these elements with the like-named parameter or default.
+For 'other' attributes, the class writer can implement non-standard
+initialization within the 'set' method.
+
+The class writer can provide an _init_self method for any classes
+requiring additional initialization.  'new' calls _init_self after
+initializing all attributes for all classes in the object's class
+structure.
+
+The _init_self method is responsible for initializing just the
+"current level" of the object, not its superclasses.  'new' calls
+_init_self for each class in the class hierarchy from top to bottom,
+being careful to call the method exactly once per class even in the
+presence of multiple inheritance.  The _init_self method should not
+call SUPER::_init_self as this would cause redundant initialization of
+superclasses.
+
+Subclasses of Class::AutoClass do not usually need their own 'new'
+methods.  The main exception is a subclass whose 'new' allows
+positional arguments. In this case, the subclass 'new' is responsible
+for converting the positional arguments into keyword=>value form. At
+this point, the method should call Class::AutoClass::new with the
+converted argument list. In most cases, the subclass should not call
+SUPER::new as this would force redundant argument processing in any
+superclass that also has a 'new' method.
+
+=head2 Traps for the unwary
+
+Two aspects of object initialization seem particularly troublesome,
+causing subtle bugs and ensuing grief.
+
+One trap is that attribute-initialization occurs in arbitrary order.
+There is a temptation when writing 'set' methods to assume that
+attributes are initialized in the natural order that you would set
+them if you were writing the initialization code yourself.  I have
+been burned by this many times. This is only an issue for
+OTHER_ATTRIBUTES, of course.
+
+The second trap involves "method resolution", ie, the way Perl chooses
+which sub to call when you invoke a method. Consider a class hierarchy
+C<A-B> with C<A> at the top, and imagine that each class defines a
+method C<f>.  Invoking C<f> on an object of class C<A>
+will call the code in class C<A>, whereas invoking C<f> on an object of
+class C<B> will call the code in C<A>.  No surprise yet.
+
+Now suppose the object initialization code for C<A> calls C<f> and think
+about what will happen when creating an object of class C<B>.  Invoking
+C<f> on this object will call the version of C<f> in C<B>, which means we
+will be running code that may depend on the initialization of C<B>
+which hasn't happened yet!
+
+This gotcha can arise in a fairly obvious way if the call to C<f> is in
+the _init_self method. It can arise more subtly if the call is in the
+'set' method of an OTHER_ATTRIBUTE.  It can arise even more subtly if
+C<f> is an AUTO_ATTRIBUTE in one class and a CLASS_ATTRIBUTE in the
+other.  The opportunity for mischief multiplies when SYNONYMS are
+involved.
+
+=head1 METHODS AND FUNCTIONS FOR CLASS DEVELOPERS
+
+=head2 declare
+
+ Title   : declare
+ Usage   : Class::AutoClass::declare;
+ Function: Setup Class::AutoClass machinery for a class
+ Returns : nothing
+ Args    : Optional name of class being created; default is __PACKAGE__
+ Note    : Uses current values of @AUTO_ATTRIBUTES, @OTHER_ATTRIBUTES, 
+           @CLASS_ATTRIBUTES, %SYNONYMS, %DEFAULTS, $CASE.
+
+=head2 _init_self
+
+ Title   : _init_self
+ Usage   : $self->_init_self($class,$args)
+ Function: Called by 'new' to initialize new object
+ Returns : nothing
+ Args    : class being initialized and Hash::AutoHash::Args object
+ Notes   : Implemented by subclasses requiring non-standard initialization. Not
+           implemented by Class::AutoClass itself
+
+The original design of Class::AutoClass provided no way for _init_self
+to control the return-value of 'new'.  All _init_self could do was
+modify the contents of the object already constructed by 'new'.  This
+proved too limiting, and we added two workarounds: (1) If _init_self
+sets the __NULLIFY__ element of the object to a true value (eg, by
+saying $self->{__NULLIFY__}=1), 'new' will return undef. (2) If
+_init_self sets the __OVERRIDE__ element of the object to true value
+(usually an object), 'new' will return that value.  If both
+__NULLIFY__ and __OVERRIDE__ are set, it is arbitrary which one will
+win.
+
+=head1 METHODS AND FUNCTIONS FOR CLASS USERS
 
 =head2 new
 
  Title   : new
- Usage   : $object=new Foo(first_name=>'Nat', last_name=>'Goodman')
-           where Foo is a subclass of AutoClass
+ Usage   : $john=new Person(first_name=>'John',last_name=>'Smith')
+           where Person is a subclass of Class::AutoClass
  Function: Create and initialize object
- Returns : New object of class $class
- Args    : Any arguments needed by subclasses
-         -->> Arguments must be in keyword form.  See DESCRIPTION for more.
- Notes   : Tries to invoke superclass to actually create the object
-
-
-=head2 _init
-
- Title   : _init
- Usage   : $self->_init($class,$args)
- Function: Initialize new object
- Returns : nothing useful
- Args    : $class -- lexical (static) class being initialized, not the
-           actual (dynamic) class of $self
-           $arg -- argument list in canonical keyword form
- Notes   : Adapted from Chapter 10 of Paul Fenwick''s excellent tutorial on 
-           Object Oriented Perl (see http://perltraining.com.au/notes/perloo.pdf).
+ Returns : New object of the given class or undef
+ Args    : Any arguments needed by the class in keyword=>value form
+ Notes   : Implemented by Class::AutoClass and usually not by subclasses
 
 =head2 set
 
  Title   : set
- Usage   : $self->set(-first_name=>'Nat',-last_name=>'Goodman')
+ Usage   : $john->set(last_name=>'Doe',sex=>'M')
  Function: Set multiple attributes in existing object
  Args    : Parameter list in same format as for new
  Returns : nothing
@@ -633,151 +1069,182 @@ internal methods are preceded with _
 =head2 set_attributes
 
  Title   : set_attributes
- Usage   : $self->set_attributes([qw(first_name last_name)],$args)
- Function: Set multiple attributes from a Class::AutoClass::Args object
+ Usage   : $john->set_attributes([qw(first_name last_name)],$args)
+ Function: Set multiple attributes from a Hash::AutoHash::Args object
            Any attribute value that is present in $args is set
  Args    : ARRAY ref of attributes
-           Class::AutoClass::Args object
+           Hash::AutoHash::Args object
  Returns : nothing
 
 =head2 get
 
  Title   : get
- Usage   : ($first,$last)=$self->get(qw(-first_name,-last_name))
+ Usage   : ($first,$last)=$john->get(qw(first_name last_name))
  Function: Get values for multiple attributes
  Args    : Attribute names
  Returns : List of attribute values
 
-=head2 AUTO_ATTRIBUTES
+=head1 SEE ALSO
 
- Title   : AUTO_ATTRIBUTES
- Usage   : @auto_attributes=AUTO_ATTRIBUTES('SubClass')
-           @auto_attributes=$self->AUTO_ATTRIBUTES();
- Function: Get @AUTO_ATTRIBUTES for lexical class.
-           @AUTO_ATTRIBUTES is defined by class writer. These are attributes for which get and set methods
-           are automatically generated.  _init automatically
-           initializes these attributes from like-named parameters in
-           the argument list
- Args : class
+L<mro>, L<Compat::MRO>, and L<Class::C3> deal with "method resolution
+order" and may offer better ways to control the order in which class
+initialization occurs.  L<NEXT> is an older approach still in use.
 
-=head2 OTHER_ATTRIBUTES
+CPAN has many modules that generate 'get' and 'set' methods including
+L<Class::Accessor>, L<Class::Builer>, L<Class::Class>,
+L<Class::Frame>, L<Class::Generate>, L<Class::MethodMaker>,
+L<Class::Struct>.
 
- Title   : OTHER_ATTRIBUTES
- Usage   : @other_attributes=OTHER_ATTRIBUTES('SubClass')
-           @other_attributes=$self->OTHER_ATTRIBUTES();
- Function: Get @OTHER_ATTRIBUTES for lexical class.
-           @OTHER_ATTRIBUTES is defined by class writer. These are attributes for which get and set methods
-           are not automatically generated.  _init automatically
-           initializes these attributes from like-named parameters in
-           the argument list
- Args : class
+This class uses L<Hash::AutoHash::Args> to represent keyword=>value argument lists.
 
-=head2 SYNONYMS
+=head1 AUTHOR
 
- Title   : SYNONYMS
- Usage   : %synonyms=SYNONYMS('SubClass')
-           %synonyms=$self->SYNONYMS();
- Function: Get %SYNONYMS for lexical class.
-           %SYNONYMS is defined by class writer. These are alternate names for attributes generally
-           defined in superclasses.  get and set methods are
-           automatically generated.  _init automatically initializes
-           these attributes from like-named parameters in the argument
-           list
- Args : class
+Nat Goodman, C<< <natg at shore.net> >>
 
-=head2 declare
+=head1 BUGS
 
- Title   : declare
- Usage   : @AUTO_ATTRIBUTES=qw(sex address dob);
-           @OTHER_ATTRIBUTES=qw(age);
-           %SYNONYMS=(name=>'id');
-	       AutoClass::declare(__PACKAGE__,'lower|upper');
- Function: Generate get and set methods for simple attributes and synonyms.
-           Method names are identical to the attribute names including case
- Returns : nothing
- Args    : lexical class being created -- should always be __PACKAGE__
-           ARRAY ref of attributes
-           HASH ref of synonyms. Keys are new names, values are old
-           code that indicates whether method should also be generated
-            with all lower or upper case names
-            
-=head2 _enumerate
+Please report any bugs or feature requests to C<bug-class-autoclass at
+rt.cpan.org>, or through the web interface at
+L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=Class-AutoClass>.  I
+will be notified, and then you'll automatically be notified of
+progress on your bug as I make changes.
 
- Title   : _enumerate
- Usage   : _enumerate($class);
- Function: locates classes that have a callable constructor
- Args    : a class reference
- Returns : list of internal classes, a class with a callable constructor 
+=head2 Known Bugs and Caveats
+
+=over 2
+
+=item 1. This module is old
+
+The current code does not build on recent CPAN modules that cover much
+of the same ground. Future releases, if any, will entail a redesign.
+
+=item 2. Inheriting 'new' from an external class often fails
+
+We intended to support class hierarchies containing "external"
+classes, ie, ones that are not derived from Class::AutoClass. A
+use-case we really wanted to handle was letting an external class
+construct the object by running its 'new' method.  The code tries to do
+this, but it doesn't work in most cases, because we provided no way to
+manipulate the arguments that are sent to the external class's 'new'
+method. So, for example, if the external 'new' expects a positional
+argument list, you're hosed.
+
+=item 3. Non-lower case attribute names don't work well
+
+The design is schizophrenic in its treatment of attribute case.  We
+process argument lists using L<Hash::AutoHash::Args>, which explicitly
+converts all keywords to lower-case.  Yet we provide the $CASE
+variable which is supposed to control attribute case conversion.  What
+were we thinking??
+
+Lower-case attribute names are the only ones that work well.
+
+=item 4. The workarounds that let _init_self control the value
+returned by 'new' are crude.
+
+=item 5. Accessing class attributes sometimes fails when a parent
+class "uses" its children.
+
+This happens rarely, but can occur legitimately, e.g., when a base
+class dispatches to a child based on the value of a parameter.  The
+issue arises only if the parent class uses its children at
+compile-time (typically by including them in the list of uses at the
+top of the module); run-time uses or requires don't seem to be a
+problem.
+
+A workaround is implemented that handles such cases "most of the
+time".  The case that is not fully handled arises when a
+Class::AutoClass class inherits from a non-Class::AutoClass class. In
+this case, declaration of the class is deferred until run-time, more
+specifically until the first time 'new' is called for the class or a
+subclass.  This works fine except for class attributes, since class
+attributes (unlike instance attributes) can be accessed before 'new'
+is called.  To be clear, in this one case, it does not work to access
+class attributes before creating an object of the class - this is
+clearly a bug.
+
+=item 6. No special support for DESTROY
+
+Object destruction should occur bottom-to-top, opposite to the direction of object initialization.  Making this happen is a challenge in the presence of multiple inheritance.  Class::AutoClass does nothing to help.
+
+=item 7. Subtle bugs in object initialization
+
+See L<Traps for the unwary>.
+
+=item 8.  Initialization of synonyms
+
+It works fine to provide a default value for a synonym (via
+%DEFAULTS), but if you supply a default value for both a synonym and
+its target, the one that sticks is arbitrary. Likewise it works fine
+to provide an initial value for a synonym (via 'new'), but if you
+supply an initial value for both a synonym and its target, the one
+that sticks is arbitrary.
+
+=item 9.  Inconsistent attribute declarations
+
+Inconsistent attribute declarations are not detected in all cases. The code successfully detects cases where an attribute is defined as a class attribute in one class, and an instance attribute ('auto' or 'other') in a superclass or subclass.  It does not reliably detect inconsistencies that occur in a single class.  The following cases are not detected:
+
+=over 2
+
+=item - attribute declared 'auto' and 'other'
+
+=item - attribute declared 'auto' and 'class'
+
+=item - attribute declared 'other' and 'class' when no implementation is provided for 'other'
+
+=item - attribute declared 'synonym' and 'other'
+
+=back
+
+=back
+
+=head1 SUPPORT
+
+You can find documentation for this module with the perldoc command.
+
+    perldoc Class::AutoClass
 
 
-=head2 _fix_args
+You can also look for information at:
 
- Title   : _fix_args
- Usage   : $args=_fix_args(-name=>'Nat',-name=>Goodman,address=>'Seattle')
-           $args=$self->_fix_args(@args)
+=over 4
 
- Function: Convert argument list into canonical form.  This is a HASH ref in 
-           which keys are uppercase with no leading dash, and repeated
-           keyword arguments are merged into an ARRAY ref.  In the
-           example above, the argument list would be converted to this
-           hash
-              (NAME=>['Nat', 'Goodman'],ADDRESS=>'Seattle')
- Returns : argument list in canonical form
- Args    : argument list in any keyword form
+=item * RT: CPAN's request tracker
 
-=head2 _fix_keyword
+L<http://rt.cpan.org/NoAuth/Bugs.html?Dist=Class-AutoClass>
 
- Title   : _fix_keyword
- Usage   : $keyword=_fix_keyword('-name')
-           @keywords=_fix_keyword('-name','-address');
- Function: Convert a keyword or list of keywords into canonical form. This
-           is uppercase with no leading dash.  In the example above,
-           '-name' would be converted to 'NAME'. Non-scalars are left
-           unchanged.
- Returns : keyword or list of keywords in canonical form 
- Args : keyword or list of keywords
+=item * AnnoCPAN: Annotated CPAN documentation
 
-=head2 _set_attributes
+L<http://annocpan.org/dist/Class-AutoClass>
 
- Title   : _set_attributes
- Usage   :   my %synonyms=SYNONYMS($class);
-             my $attributes=[AUTO_ATTRIBUTES($class),
-			     OTHER_ATTRIBUTES($class),
-			     keys %synonyms];
-             $self->_set_attributes($attributes,$args);
- Function: Set a list of simple attributes from a canonical argument list
- Returns : nothing
- Args    : $attributes -- ARRAY ref of attributes to be set
-           $args -- argument list in canonical keyword (hash) form 
- Notes   : The function calls the set method for each attribute passing 
-           it the like-named parameter from the argument list
+=item * CPAN Ratings
 
-=head2 _is_positional
+L<http://cpanratings.perl.org/d/Class-AutoClass>
 
- Title   : _is_positional
- Usage  : if (_is_positional(@args)) {
-             ($arg1,$arg2,$arg3)=@args; 
-	   }
- Function: Checks whether an argument list conforms to our convention 
-           for positional arguments. The function returns true if 
-           (1) the argument list has an odd number of elements, or
-           (2) the first argument starts with a dash ('-').
-           Obviously, this is not fully general.
- Returns : boolean
- Args    : argument list
- Notes   : As explained in DESCRIPTION, we recommend that methods not 
-           support both positional and keyford argument lists, as this 
-           is inherently ambiguous.
- BUGS    : NOT YET TESTED in this version
- 
-=head2 set_class_defaults
+=item * Search CPAN
 
- Title   : set_class_defaults
- Usage   : $self->set_class_defaults($attributes,$class,$args);
- Function: Set default values for class argument
- Args    : reference to the class and a Class::AutoClass::Args object
-           which contains the arguments to set
- Returns : nothing
+L<http://search.cpan.org/dist/Class-AutoClass/>
+
+=back
+
+
+=head1 ACKNOWLEDGEMENTS
+
+Chris Cavnor maintained the CPAN version of the module for several
+years after its initial release.
+
+=head1 COPYRIGHT & LICENSE
+
+Copyright 2003, 2009 Nat Goodman, Institute for Systems Biology
+(ISB). All Rights Reserved.
+
+This program is free software; you can redistribute it and/or modify it
+under the terms of either: the GNU General Public License as published
+by the Free Software Foundation; or the Artistic License.
+
+See http://dev.perl.org/licenses/ for more information.
+
 
 =cut
 
+1; # End of Class::AutoClass

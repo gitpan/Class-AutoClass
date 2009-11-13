@@ -4,12 +4,15 @@ use Class::AutoClass;
 use vars
   qw(@ISA @AUTO_ATTRIBUTES @OTHER_ATTRIBUTES @CLASS_ATTRIBUTES %SYNONYMS %DEFAULTS);
 @ISA              = qw(Class::AutoClass);
-@AUTO_ATTRIBUTES  = qw(name sex address dob a);
-@OTHER_ATTRIBUTES = qw(age);
+@AUTO_ATTRIBUTES  = qw(name sex address dob a _b c d z real);
+@OTHER_ATTRIBUTES = qw(b age);
 @CLASS_ATTRIBUTES = qw(species population class_hash);
-%SYNONYMS         = ( gender => 'sex', whatisya => 'sex' );
+%SYNONYMS         = ( gender => 'sex', whatisya => 'sex', syn=>'real' );
 %DEFAULTS = (
               a          => 'parent',
+              b          => 'virtual parent',
+              c          => 'default set in parent, used in kids',
+              z          => 'default that is never used',
               species    => 'Dipodomys gravipes',
               population => 42,
               class_hash => {
@@ -26,4 +29,9 @@ sub _init_self {
 
 }
 sub age { print "Calculate age from dob. NOT YET IMPLEMENTED\n"; undef }
+# NG 05-12-07. virtual attribute for regression test
+sub b {
+  my $self=shift;
+  @_? $self->_b(@_): $self->_b(@_);
+}
 1;

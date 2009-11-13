@@ -9,7 +9,10 @@ use vars
 @OTHER_ATTRIBUTES = qw();
 @CLASS_ATTRIBUTES = qw(species);
 %SYNONYMS         = ();
-%DEFAULTS         = ( a => 'grandchild', species => 'schmoo' );
+%DEFAULTS         = ( a => 'grandchild', 
+		      b => 'virtual grandchild', 
+		      d => 'default set in grandchild for attribute defined in parent',
+		      species => 'schmoo' );
 Class::AutoClass::declare(__PACKAGE__);
 
 sub _init_self {

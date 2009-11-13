@@ -5,12 +5,13 @@ use Parent;
 use vars
   qw(@ISA @AUTO_ATTRIBUTES @OTHER_ATTRIBUTES @CLASS_ATTRIBUTES %SYNONYMS %DEFAULTS);
 @ISA              = qw(Parent);
-@AUTO_ATTRIBUTES  = qw();
+@AUTO_ATTRIBUTES  = qw(c);
 @OTHER_ATTRIBUTES = qw();
 @CLASS_ATTRIBUTES = qw(species class_hash);
-%SYNONYMS         = ();
+%SYNONYMS         = (stork=>'sex');
 %DEFAULTS = (
               a          => 'child',
+              b          => 'virtual child',
               class_hash => {
                               bird  => 'robin',
                               these => 'them',
