@@ -2,7 +2,9 @@ Build.PL
 Changes
 lib/Class/AutoClass.pm
 lib/Class/AutoClass/Root.pm
+Makefile.PL
 MANIFEST			This list of files
+META.yml
 README
 t/autoclass.000.code_exists.t
 t/autoclass.001.boilerplate.t
@@ -328,5 +330,3 @@ t/Child.pm
 t/GrandChild.pm
 t/GreatGrandChild.pm
 t/Parent.pm
-Makefile.PL
-META.yml

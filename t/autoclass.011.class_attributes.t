@@ -1,11 +1,9 @@
 use strict;
 use lib qw(t);
-# use lib map {glob($_)} qw(../lib ~/lib/perl5 ~/lib/perl5/site_perl/5.8.5);
 use Parent;
 use Child;
 use GrandChild;
 use Test::More;
-use Data::Dumper;
 
 my $p = Parent->population;
 is ($p, 42, 'class variable init\'d at declare time, also answer to life, universe, etc');

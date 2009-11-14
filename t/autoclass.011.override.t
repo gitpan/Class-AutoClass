@@ -4,8 +4,6 @@ use autoclass_011::Override;
 use Child;
 use Test::More;
 
-use Data::Dumper;
-
 # this tests the ability to override the AutoClass object with another object (using the '_OVERRIDE__' flag)
 my $over1 = new autoclass_011::Override;
 is(ref $over1, 'autoclass_011::Override','override not set');

@@ -20,9 +20,11 @@ my $builder = $class->new(
     build_requires =>   {'Test::More' => 0.88,
 		         'Test::Deep' => 0,
 		         'Exporter' => 0,
-
+			 'IO::Scalar' => 2.1,
+			 'Scalar::Util' => 1.01,
 		        },
     requires =>         {'Carp' => 0,
+			 'Storable' => 0.6,
 		         'Hash::AutoHash::Args' => 1.10,
 
 		        },
