@@ -1,6 +1,9 @@
 Revision history for Class-AutoClass
 
 
+1.50	2009-11-15
+        See changes for 1.49_02, 1.49_01
+
 1.49_02 2009-11-14 - Trial release on the way to 1.50
 	Fixed dependencies in Build.PL
         Removed unused dependencies from tests
