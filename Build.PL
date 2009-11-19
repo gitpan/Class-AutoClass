@@ -18,7 +18,7 @@ my $builder = $class->new(
     dist_author         => q{Nat Goodman <natg@shore.net>},
     dist_version_from   => 'lib/Class/AutoClass.pm',
     build_requires =>   {'Test::More' => 0.88,
-		         'Test::Deep' => 0,
+		         'Test::Deep' => 0.098,
 		         'Exporter' => 0,
 			 'IO::Scalar' => 2.1,
 			 'Scalar::Util' => 1.01,

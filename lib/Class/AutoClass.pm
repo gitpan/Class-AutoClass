@@ -1,5 +1,5 @@
 package Class::AutoClass;
-our $VERSION = '1.50';
+our $VERSION = '1.51';
 
 use strict;
 use Carp;
@@ -794,7 +794,7 @@ Class::AutoClass - Create get and set methods and simplify object initialization
 
 =head1 VERSION
 
-Version 1.50
+Version 1.51
 
 =head1 SYNOPSIS
 

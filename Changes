@@ -1,6 +1,13 @@
 Revision history for Class-AutoClass
 
 
+1.51	2009-11-19
+        Tightened dependency for Test::Deep (now require version 0.098 instead of 0),
+	  because this is first version that defines cmp_details and deep_diag. 
+	  Thanks to the CPAN Testers for finding this!!
+        Changed test file t/autoclassUtil.pm to manually import cmp_details and deep_diag,
+	  because not exported by Test::Deep until version 0.104.
+
 1.50	2009-11-15
         See changes for 1.49_02, 1.49_01
 

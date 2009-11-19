@@ -3,8 +3,13 @@ use lib qw(t);
 use strict;
 use Carp;
 use Test::More;
-use Test::Deep qw(bag methods cmp_details deep_diag);
-# use Scalar::Util qw(reftype); # don't. Test::Deep exports reftype, too
+# NG 09-11-19: Test::Deep doesn't export cmp_details, deep_diag until recent version (0.104)
+#              so we import them "by hand" instead. import of bag, methods was never needed.
+# use Test::Deep qw(bag methods cmp_details deep_diag);
+use Test::Deep;
+*cmp_details=\&Test::Deep::cmp_details;
+*deep_diag=\&Test::Deep::deep_diag;
+# use Scalar::Util qw(reftype); # don't do it! Test::Deep exports reftype, too
 use Scalar::Util;
 use Exporter();
 use Class::AutoClass;
