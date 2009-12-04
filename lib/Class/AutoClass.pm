@@ -1,5 +1,5 @@
 package Class::AutoClass;
-our $VERSION = '1.51';
+our $VERSION = '1.52';
 
 use strict;
 use Carp;
@@ -529,7 +529,12 @@ sub declare {
  # if (%autodb) {               # register after setting ANCESTORS
  if (UNIVERSAL::isa($class,'Class::AutoDB::Object')) {
    require 'Class/AutoDB.pm';    # AutoDB.pm is needed for calling auto_register
-   my $args = Hash::AutoHash::Args->new( %autodb, -class => $class ); # TODO - spec says %AUTODB=(1) should work
+   # NG 09-12-04: handle %AUTODB=0. (any single false value)
+   #              explicitly handle %AUTODB=1. previous version worked 'by luck' :)
+   confess "Illegal form of \%AUTODB. \%AUTODB=<false> reserved for future use"
+     if (scalar(keys %autodb)==1) && !(keys %autodb)[0];
+   delete $autodb{1};		# delete '1=>anything' if it exists 
+   my $args = Hash::AutoHash::Args->new( %autodb, -class => $class );
   Class::AutoDB::auto_register($args);
  }
  
@@ -794,7 +799,7 @@ Class::AutoClass - Create get and set methods and simplify object initialization
 
 =head1 VERSION
 
-Version 1.51
+Version 1.52
 
 =head1 SYNOPSIS
 
@@ -831,8 +836,8 @@ Version 1.51
     }
     return join(' ',$self->first_name,$self->last_name);
   }
-  ########################################
 
+  ########################################
   # code that uses class
   #
   use Person;
@@ -1101,7 +1106,7 @@ This class uses L<Hash::AutoHash::Args> to represent keyword=>value argument lis
 
 Nat Goodman, C<< <natg at shore.net> >>
 
-=head1 BUGS
+=head1 BUGS AND CAVEATS
 
 Please report any bugs or feature requests to C<bug-class-autoclass at
 rt.cpan.org>, or through the web interface at
