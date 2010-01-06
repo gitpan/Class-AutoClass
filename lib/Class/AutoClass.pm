@@ -1,5 +1,5 @@
 package Class::AutoClass;
-our $VERSION = '1.52';
+our $VERSION = '1.53';
 
 use strict;
 use Carp;
@@ -113,7 +113,14 @@ sub _init {
       grep {exists $args->{$fixed_attributes{$_}}} @$syn_list; # case 3
     # okay to set default!!
     my $value=$defaults->{$fixed_func};
-    $value=ref $value? dclone($value): $value; # deep copy refs so each instance has own copy
+    # NG 10-01-06: allow CODE and GLOB defaults. dclone can't copy these...
+    #              deep copy other refs so each instance has own copy
+    my $copy;
+    if (ref $value) {
+      $copy=eval{dclone($value)};
+      $value=$copy unless $@;	# use $copy unless dclone failed
+    }
+    # $value=ref $value? dclone($value): $value;
     $self->$fixed_func($value);
   }
 
@@ -799,7 +806,7 @@ Class::AutoClass - Create get and set methods and simplify object initialization
 
 =head1 VERSION
 
-Version 1.52
+Version 1.53
 
 =head1 SYNOPSIS
 

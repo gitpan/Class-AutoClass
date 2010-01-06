@@ -44,6 +44,7 @@ t/autoclass.103.defaults.t
 t/autoclass.104.syn_defaults.t
 t/autoclass.105.synonyms.t
 t/autoclass.106.synonyms.t
+t/autoclass.107.code_refs.t
 t/autoclass_010/Parent.pm
 t/autoclass_011/Inconsistent1.pm
 t/autoclass_011/Inconsistent2.pm

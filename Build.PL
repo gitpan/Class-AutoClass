@@ -24,7 +24,7 @@ my $builder = $class->new(
 			 'Scalar::Util' => 1.01,
 		        },
     requires =>         {'Carp' => 0,
-			 'Storable' => 0.6,
+			 'Storable' => 2.16,
 		         'Hash::AutoHash::Args' => 1.10,
 
 		        },

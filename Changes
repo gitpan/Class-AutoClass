@@ -1,6 +1,10 @@
 Revision history for Class-AutoClass
 
 
+1.53	2010-01-06
+	Now works to use CODE or GLOB refs as DEFAULTS
+        Fixed version number for dependency Storable in Build.PL
+
 1.52	2009-12-04
         Changed handling of %AUTODB=0 and %AUTODB=1 in anticipation of 
           Class::AutoDB 1.10.  Does not functionally change Class::AutoClass
