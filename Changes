@@ -1,6 +1,14 @@
 Revision history for Class-AutoClass
 
 
+1.54	2010-08-22
+
+	Fixed bug causing __OVERRIDE__ not to work correctly in base
+        classes.  Setting __OVERRIDE__ in a base class did not change
+        the value of $self passed to _init_self in subclasses.  The net
+        effect was to lose all the initialization done in subclasses.
+	sigh! how did this survive so long??
+
 1.53	2010-01-06
 	Now works to use CODE or GLOB refs as DEFAULTS
         Fixed version number for dependency Storable in Build.PL
@@ -10,11 +18,14 @@ Revision history for Class-AutoClass
           Class::AutoDB 1.10.  Does not functionally change Class::AutoClass
 
 1.51	2009-11-19
-        Tightened dependency for Test::Deep (now require version 0.098 instead
-          of 0), because this is first version that defines cmp_details and 
-	  deep_diag. Thanks to the CPAN Testers for finding this!!
-        Changed test file t/autoclassUtil.pm to manually import cmp_details and
-	  deep_diag, because not exported by Test::Deep until version 0.104.
+
+        Tightened dependency for Test::Deep (now require version 0.098 
+          instead of 0), because this is first version that defines
+          cmp_details and deep_diag. Thanks to the CPAN Testers for 
+          finding this!!
+        Changed test file t/autoclassUtil.pm to manually import 
+          cmp_details and deep_diag, because not exported by Test::Deep
+          until version 0.104.
 
 1.50	2009-11-15
         See changes for 1.49_02, 1.49_01

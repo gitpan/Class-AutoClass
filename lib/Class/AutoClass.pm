@@ -1,5 +1,5 @@
 package Class::AutoClass;
-our $VERSION = '1.53';
+our $VERSION = '1.54';
 
 use strict;
 use Carp;
@@ -57,16 +57,21 @@ sub new {
  for my $class (@$classes) {
    my $init_self = $class->can('_init_self');
    $self->$init_self( $class, $args ) if $init_self;
+   # NG 10-08-22: moved test for OVERRIDE to here to fix bug in which subsequent
+   #              calls to _init_self continue to operate on original $self !
+   $self=$self->{__OVERRIDE__} if $self->{__OVERRIDE__};
    #  $self->_init( $class, $args, $defaults, $default2code );
  }
 ################################################################################
 
    if($self->{__NULLIFY__}) {
    	return undef;
-   } elsif ($self->{__OVERRIDE__}) { # override self with the passed object
-      $self=$self->{__OVERRIDE__};
-      return $self;
-   } else {
+    # NG 10-08-22: moved test for OVERRIDE to here to fix bug in which subsequent
+    #              calls to _init_self continue to operate on original $self !
+    # } elsif ($self->{__OVERRIDE__}) { # override self with the passed object
+    #    $self=$self->{__OVERRIDE__};
+    #    return $self;
+      } else {
      return $self;
    }
 }
@@ -806,7 +811,7 @@ Class::AutoClass - Create get and set methods and simplify object initialization
 
 =head1 VERSION
 
-Version 1.53
+Version 1.54
 
 =head1 SYNOPSIS
 
