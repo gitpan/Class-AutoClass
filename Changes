@@ -1,8 +1,13 @@
 Revision history for Class-AutoClass
 
+1.55	2012-MM-DD
+	Added test for version number in POD
+	Changes to Build.PL
+	  Removed redundant 'dist_version_from' param
+          Added Module::Build to configure_requires
+	  Changed create_makefile_pl from deprecated 'passthrough' to 'small'
 
 1.54	2010-08-22
-
 	Fixed bug causing __OVERRIDE__ not to work correctly in base
         classes.  Setting __OVERRIDE__ in a base class did not change
         the value of $self passed to _init_self in subclasses.  The net
@@ -18,7 +23,6 @@ Revision history for Class-AutoClass
           Class::AutoDB 1.10.  Does not functionally change Class::AutoClass
 
 1.51	2009-11-19
-
         Tightened dependency for Test::Deep (now require version 0.098 
           instead of 0), because this is first version that defines
           cmp_details and deep_diag. Thanks to the CPAN Testers for 

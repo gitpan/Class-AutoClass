@@ -15,8 +15,11 @@ note 'test child attributes';
 is($child->auto_c,'child auto attribute','child auto attribute default');
 is($child->other_c,'child other attribute','child other attribute default');
 is($child->class_c,'child class attribute','child class attribute default');
-is($child->syn_c,'child synonym','child synonym default');
-is($child->real_c,'child synonym','child target of synonym equals synonym default');
+# NG 12-11-25: as of perl 5.17.6, order of hash keys is randomized. we can no predict
+#              order in which defaults applied to synonyms amd thus the final value
+#              of 'syn_c' and 'real_c' making these tests pointless
+# is($child->syn_c,'child synonym','child synonym default');
+# is($child->real_c,'child synonym','child target of synonym equals synonym default');
 
 # test auto attributes
 ok($child->can('auto_c'),'child auto attribute defined');
@@ -49,8 +52,9 @@ note 'test parent attributes';
 is($child->auto_p,'parent auto attribute','parent auto attribute default');
 is($child->other_p,'parent other attribute','parent other attribute default');
 is($child->class_p,'parent class attribute','parent class attribute default');
-is($child->syn_p,'parent synonym','parent synonym default');
-is($child->real_p,'parent synonym','parent target of synonym equals synonym default');
+# NG 12-11-25: these tests now pointless.  see comment about hash keys randomization
+# is($child->syn_p,'parent synonym','parent synonym default');
+# is($child->real_p,'parent synonym','parent target of synonym equals synonym default');
 
 # test auto attributes
 ok($child->can('auto_p'),'parent auto attribute defined');
@@ -85,13 +89,15 @@ my $child =new autoclass_101::Child;
 is($child->auto_c,'child auto attribute','child auto attribute default 2nd time');
 is($child->other_c,'child other attribute','child other attribute default 2nd time');
 is($child->class_c,12345,'child class attribute default 2nd time');
-is($child->syn_c,'child synonym','child synonym default 2nd time');
-is($child->real_c,'child synonym','child target of synonym equals synonym default 2nd time');
+# NG 12-11-25: these tests now pointless.  see comment about hash keys randomization
+# is($child->syn_c,'child synonym','child synonym default 2nd time');
+# is($child->real_c,'child synonym','child target of synonym equals synonym default 2nd time');
 
 is($child->auto_p,'parent auto attribute','parent auto attribute default 2nd time');
 is($child->other_p,'parent other attribute','parent other attribute default 2nd time');
 is($child->class_p,12345,'parent class attribute default 2nd time');
-is($child->syn_p,'parent synonym','parent synonym default 2nd time');
-is($child->real_p,'parent synonym','parent target of synonym equals synonym default 2nd time');
+# NG 12-11-25: these tests now pointless.  see comment about hash keys randomization
+# is($child->syn_p,'parent synonym','parent synonym default 2nd time');
+# is($child->real_p,'parent synonym','parent target of synonym equals synonym default 2nd time');
 
 done_testing();

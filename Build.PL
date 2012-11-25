@@ -12,24 +12,24 @@ my $class = Module::Build->subclass
      },
   );
 
-my $builder = $class->new(
-    module_name         => 'Class::AutoClass',
-    license             => 'perl',
-    dist_author         => q{Nat Goodman <natg@shore.net>},
-    dist_version_from   => 'lib/Class/AutoClass.pm',
-    build_requires =>   {'Test::More' => 0.88,
+my $builder = $class->new
+  (module_name         => 'Class::AutoClass',
+   license             => 'perl',
+   dist_author         => q{Nat Goodman <natg@shore.net>},
+   configure_requires=>{'Module::Build' => 0.4,
+		       },
+   build_requires =>   {'Test::More' => 0.88,
 		         'Test::Deep' => 0.098,
 		         'Exporter' => 0,
 			 'IO::Scalar' => 2.1,
 			 'Scalar::Util' => 1.01,
-		        },
-    requires =>         {'Carp' => 0,
-			 'Storable' => 2.16,
-		         'Hash::AutoHash::Args' => 1.10,
-
-		        },
+		       },
+   requires =>         {'Carp' => 0,
+			'Storable' => 2.16,
+			'Hash::AutoHash::Args' => 1.10,
+		       },
     add_to_cleanup      => [ 'Class-AutoClass-*' ],
-    create_makefile_pl => 'passthrough',
+    create_makefile_pl => 'small',
 );
 
 $builder->create_build_script();

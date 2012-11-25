@@ -1,5 +1,5 @@
 package Class::AutoClass;
-our $VERSION = '1.54';
+our $VERSION = '1.55';
 
 use strict;
 use Carp;
@@ -533,6 +533,14 @@ sub declare {
   # add AutoDB::Object to @ISA if necessary
   unless ( grep /^Class::AutoDB::Object/, @{ $class . '::ISA' } ) {
     unshift @{ $class . '::ISA' }, 'Class::AutoDB::Object';
+    # NG 10-09-16: I thought it work work to push Object onto end of @ISA instead of 
+    #              unshifting it onto front to reduce impact of namespace pollution.
+    #              It does that okay, but introduces a new bug: oid generation and
+    #              all that is doen by Serialize which is a base class of Object. In
+    #              old implementation, that happened early; in new implementation, it
+    #              happens late.  Screws up a lot of things.:(
+    #              Back to the dawing boards...
+    # push @{ $class . '::ISA' }, 'Class::AutoDB::Object';
   }
   require 'Class/AutoDB/Object.pm';
   require 'Class/AutoDB.pm';    # AutoDB.pm is needed for calling auto_register
@@ -811,7 +819,7 @@ Class::AutoClass - Create get and set methods and simplify object initialization
 
 =head1 VERSION
 
-Version 1.54
+Version 1.55
 
 =head1 SYNOPSIS
 
@@ -1007,8 +1015,11 @@ One trap is that attribute-initialization occurs in arbitrary order.
 There is a temptation when writing 'set' methods to assume that
 attributes are initialized in the natural order that you would set
 them if you were writing the initialization code yourself.  I have
-been burned by this many times. This is only an issue for
-OTHER_ATTRIBUTES, of course.
+been burned by this many times. This is mainly an issue for
+OTHER_ATTRIBUTES. The issue also arises with SYNONYMS. If your code
+initializes both sides of a synonym with different values, it is
+undefined which value will stick. This can happen when your codes sets
+values explicitly or via DEFAULTS.
 
 The second trap involves "method resolution", ie, the way Perl chooses
 which sub to call when you invoke a method. Consider a class hierarchy
