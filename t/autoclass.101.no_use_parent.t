@@ -15,7 +15,7 @@ note 'test child attributes';
 is($child->auto_c,'child auto attribute','child auto attribute default');
 is($child->other_c,'child other attribute','child other attribute default');
 is($child->class_c,'child class attribute','child class attribute default');
-# NG 12-11-25: as of perl 5.17.6, order of hash keys is randomized. we can no predict
+# NG 12-11-25: as of perl 5.17.6, order of hash keys is randomized. we cannot predict
 #              order in which defaults applied to synonyms amd thus the final value
 #              of 'syn_c' and 'real_c' making these tests pointless
 # is($child->syn_c,'child synonym','child synonym default');

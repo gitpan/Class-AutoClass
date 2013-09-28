@@ -1,11 +1,16 @@
 Revision history for Class-AutoClass
 
-1.55	2012-MM-DD
+1.56_01	2013-09-28
+	Update depdendencies
+
+1.55	2012-11-25
 	Added test for version number in POD
 	Changes to Build.PL
 	  Removed redundant 'dist_version_from' param
           Added Module::Build to configure_requires
 	  Changed create_makefile_pl from deprecated 'passthrough' to 'small'
+	Fixed test failures caused by hash key randomization in perl 5.17.6
+          autoclass.011.inconsistent.t, autoclass.101.no_use_parent.t
 
 1.54	2010-08-22
 	Fixed bug causing __OVERRIDE__ not to work correctly in base

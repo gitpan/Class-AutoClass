@@ -1,5 +1,6 @@
 package Class::AutoClass;
-our $VERSION = '1.55';
+our $VERSION = '1.56_01';
+$VERSION=eval $VERSION;         # I think this is the accepted idiom..
 
 use strict;
 use Carp;
@@ -819,7 +820,7 @@ Class::AutoClass - Create get and set methods and simplify object initialization
 
 =head1 VERSION
 
-Version 1.55
+Version 1.56
 
 =head1 SYNOPSIS
 
