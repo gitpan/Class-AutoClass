@@ -1,7 +1,8 @@
 Revision history for Class-AutoClass
 
-1.56_01	2013-09-28
+1.56_02	2013-09-29
 	Update depdendencies
+        Fix pod test
 
 1.55	2012-11-25
 	Added test for version number in POD

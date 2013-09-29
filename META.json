@@ -16,34 +16,39 @@
    "prereqs" : {
       "build" : {
          "requires" : {
+            "Carp" : "1.2",
             "Hash::AutoHash::Args" : "1.16",
             "IO::Scalar" : "2.11",
             "Module::Build" : "0.4007",
+            "Scalar::Util" : "1.23",
+            "Storable" : "2.3",
             "Test::Deep" : "0.11",
-            "Test::More" : "0.98"
+            "Test::More" : "0.98",
+            "Test::Pod" : "1.48",
+            "Test::Pod::Content" : "v0.0.6"
          }
       },
       "configure" : {
          "requires" : {
-            "Module::Build" : "0.4"
+            "Module::Build" : "0.4007"
          }
       },
       "runtime" : {
          "requires" : {
             "Cwd" : "3.4",
-            "File::Spec" : "3.4",
             "Hash::AutoHash" : "1.16",
             "Hash::AutoHash::Args" : "1.16",
             "IO::Scalar" : "2.11",
             "List::MoreUtils" : "0.33",
-            "Tie::ToObject" : "0.03"
+            "Tie::ToObject" : "0.03",
+            "XSLoader" : "0.15"
          }
       }
    },
    "provides" : {
       "Class::AutoClass" : {
          "file" : "lib/Class/AutoClass.pm",
-         "version" : "1.56_01"
+         "version" : "1.56_02"
       },
       "Class::AutoClass::Root" : {
          "file" : "lib/Class/AutoClass/Root.pm",
@@ -56,5 +61,5 @@
          "http://dev.perl.org/licenses/"
       ]
    },
-   "version" : "1.56_01"
+   "version" : "1.56_02"
 }
