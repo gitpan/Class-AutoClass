@@ -48,7 +48,7 @@
    "provides" : {
       "Class::AutoClass" : {
          "file" : "lib/Class/AutoClass.pm",
-         "version" : "1.56_02"
+         "version" : "1.56_03"
       },
       "Class::AutoClass::Root" : {
          "file" : "lib/Class/AutoClass/Root.pm",
@@ -61,5 +61,5 @@
          "http://dev.perl.org/licenses/"
       ]
    },
-   "version" : "1.56_02"
+   "version" : "1.56_03"
 }
