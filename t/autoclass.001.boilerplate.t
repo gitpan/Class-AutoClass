@@ -47,10 +47,13 @@ sub module_boilerplate_ok {
   not_in_file_ok(Changes =>
     "placeholder date/time"       => qr(Date/time)
   );
-  module_boilerplate_ok('lib/Class/AutoClass.pm');
+
+# NG 13-09-29: make this test generic
+my $builder=Module::Build->current;
+my $module_pm=File::Spec->catdir('blib',$builder->dist_version_from);
+module_boilerplate_ok($module_pm);
 
 # NG 13-09-29: Add test for correct version number an valid date in Changes
-my $builder=Module::Build->current;
 my $correct_version=$builder->dist_version;
 open(CHANGES,"< Changes") or die "couldn't open Changes for reading: $!"; 
 my $ok=0;

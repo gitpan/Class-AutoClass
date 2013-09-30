@@ -17,6 +17,8 @@
       "build" : {
          "requires" : {
             "Carp" : "1.2",
+            "Exporter" : "5.68",
+            "File::Spec" : "3.4",
             "Hash::AutoHash::Args" : "1.16",
             "IO::Scalar" : "2.11",
             "Module::Build" : "0.4007",
@@ -35,11 +37,16 @@
       },
       "runtime" : {
          "requires" : {
+            "Carp" : "1.2",
             "Cwd" : "3.4",
+            "Exporter" : "5.68",
+            "Fcntl" : "1.11",
             "Hash::AutoHash" : "1.16",
-            "Hash::AutoHash::Args" : "1.16",
+            "Hash::AutoHash::Args" : "1.17",
             "IO::Scalar" : "2.11",
             "List::MoreUtils" : "0.33",
+            "List::Util" : "1.32",
+            "Storable" : "2.3",
             "Tie::ToObject" : "0.03",
             "XSLoader" : "0.15"
          }
@@ -48,7 +55,7 @@
    "provides" : {
       "Class::AutoClass" : {
          "file" : "lib/Class/AutoClass.pm",
-         "version" : "1.56_03"
+         "version" : "1.56_04"
       },
       "Class::AutoClass::Root" : {
          "file" : "lib/Class/AutoClass/Root.pm",
@@ -61,5 +68,5 @@
          "http://dev.perl.org/licenses/"
       ]
    },
-   "version" : "1.56_03"
+   "version" : "1.56_04"
 }
