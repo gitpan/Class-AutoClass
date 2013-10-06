@@ -1,5 +1,5 @@
 package Class::AutoClass;
-our $VERSION = '1.56_04';
+our $VERSION = '1.56';
 $VERSION=eval $VERSION;         # I think this is the accepted idiom..
 
 use strict;
